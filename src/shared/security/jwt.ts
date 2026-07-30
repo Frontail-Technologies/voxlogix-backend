@@ -6,6 +6,7 @@ type TokenPayload = JwtPayload & {
   userId?: string;
   role?: string;
   email?: string;
+  companyId?: string;
 };
 
 function signToken(

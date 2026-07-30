@@ -1,6 +1,9 @@
 import type { NextFunction, Request, Response } from "express";
 
 import { appConfig } from "@/config/app.config";
+import { AppError } from "@/shared/errors/app-error";
+import { ERROR_CODES } from "@/shared/errors/error-codes";
+import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { verifyAccessToken } from "@/shared/security/jwt";
 
 export function authPlaceholderMiddleware(
@@ -31,9 +34,25 @@ export function authPlaceholderMiddleware(
       role: String(payload.role ?? "MASTER"),
       email:
         typeof payload.email === "string" ? payload.email : undefined,
+      companyId:
+        typeof payload.companyId === "string" ? payload.companyId : undefined,
     };
   }
 
-  // TODO: Replace token-only parsing with real auth module and user lookup.
+  next();
+}
+
+export function requireAuth(request: Request, _response: Response, next: NextFunction) {
+  if (!request.user) {
+    next(
+      new AppError({
+        message: "Authentication required.",
+        statusCode: HTTP_STATUS.UNAUTHORIZED,
+        errorCode: ERROR_CODES.UNAUTHORIZED,
+      }),
+    );
+    return;
+  }
+
   next();
 }

@@ -1,5 +1,6 @@
-import type { Request, Response } from "express";
+﻿import type { Request, Response } from "express";
 
+import { uploadImageAsset } from "@/modules/uploads/uploads.service";
 import { asyncHandler } from "@/shared/helpers/async-handler";
 import { sendSuccess } from "@/shared/helpers/api-response";
 
@@ -19,14 +20,31 @@ function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value ?? "";
 }
 
+async function uploadModuleMedia(request: Request) {
+  if (!request.file) return null;
+  return uploadImageAsset(request.file, {
+    folder: "modules",
+    context: "module-media",
+    fileName: request.body.name ?? "module-media",
+  });
+}
+
 export const getModules = asyncHandler(async (request: Request, response: Response) => {
   const search = typeof request.query.search === "string" ? request.query.search : undefined;
   const status = typeof request.query.status === "string" ? request.query.status : undefined;
-  const type = typeof request.query.type === "string" ? request.query.type : undefined;
+  const moduleTypeId = typeof request.query.moduleTypeId === "string" ? request.query.moduleTypeId : undefined;
   const page = Number(request.query.page ?? 1);
   const limit = Number(request.query.limit ?? 20);
 
-  const result = await listModules({ page, limit, search, status, type });
+  const result = await listModules({
+    page,
+    limit,
+    search,
+    status,
+    moduleTypeId,
+    companyId: request.user?.companyId,
+    role: request.user?.role,
+  });
 
   return sendSuccess(response, {
     data: result.items,
@@ -43,7 +61,11 @@ export const getModule = asyncHandler(async (request: Request, response: Respons
 });
 
 export const postModule = asyncHandler(async (request: Request, response: Response) => {
-  const result = await createModule(request.body);
+  const media = await uploadModuleMedia(request);
+  const result = await createModule({
+    ...request.body,
+    ...(media ? { mediaUrl: media.secureUrl ?? media.url, mediaKey: media.key } : {}),
+  });
 
   return sendSuccess(response, {
     statusCode: 201,
@@ -53,7 +75,11 @@ export const postModule = asyncHandler(async (request: Request, response: Respon
 });
 
 export const patchModule = asyncHandler(async (request: Request, response: Response) => {
-  const result = await updateModule(getParam(request.params.moduleId), request.body);
+  const media = await uploadModuleMedia(request);
+  const result = await updateModule(getParam(request.params.moduleId), {
+    ...request.body,
+    ...(media ? { mediaUrl: media.secureUrl ?? media.url, mediaKey: media.key } : {}),
+  });
 
   return sendSuccess(response, {
     message: "Module updated successfully",

@@ -1,0 +1,1 @@
+ALTER TABLE "ai_chat_sessions" ALTER COLUMN "equipment_id" DROP NOT NULL;

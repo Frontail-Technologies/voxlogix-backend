@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+﻿import { relations } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -21,6 +21,8 @@ export const admins = pgTable(
       .references(() => companies.id, { onDelete: "cascade" }),
     fullName: varchar("full_name", { length: 160 }).notNull(),
     initials: varchar("initials", { length: 8 }).notNull(),
+    avatarUrl: text("avatar_url"),
+    avatarKey: text("avatar_key"),
     username: varchar("username", { length: 80 }).notNull().unique(),
     email: varchar("email", { length: 255 }).notNull().unique(),
     phone: varchar("phone", { length: 32 }).notNull(),
@@ -67,6 +69,32 @@ export const adminLoginHistory = pgTable(
   }),
 );
 
+export const passwordResetOtps = pgTable(
+  "password_reset_otps",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    adminId: uuid("admin_id")
+      .notNull()
+      .references(() => admins.id, { onDelete: "cascade" }),
+    otpHash: text("otp_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    adminIndex: index("password_reset_otps_admin_id_idx").on(table.adminId),
+  }),
+);
+
+export const passwordResetOtpsRelations = relations(passwordResetOtps, ({ one }) => ({
+  admin: one(admins, {
+    fields: [passwordResetOtps.adminId],
+    references: [admins.id],
+  }),
+}));
+
 export const adminsRelations = relations(admins, ({ one, many }) => ({
   company: one(companies, {
     fields: [admins.companyId],
@@ -84,3 +112,4 @@ export const adminLoginHistoryRelations = relations(
     }),
   }),
 );
+

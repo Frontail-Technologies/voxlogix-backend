@@ -1,0 +1,1 @@
+ALTER TABLE "ai_settings" ALTER COLUMN "key_status" SET DEFAULT 'Disabled';

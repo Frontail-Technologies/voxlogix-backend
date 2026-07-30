@@ -1,7 +1,20 @@
-export {
+﻿export {
   adminLoginHistoryRelations,
   adminsRelations,
+  companyAccessSettingsRelations,
+  companyModuleAccessRelations,
+  companyAiUsageDailyRelations,
   companiesRelations,
   moduleFieldsRelations,
   modulesRelations,
+  platformActivitiesRelations,
+  equipmentAssetsRelations,
+  equipmentManualChunksRelations,
+  equipmentManualsRelations,
+  issueCategoriesRelations,
+  locationsRelations,
+  logAttachmentsRelations,
+  logTimelineEventsRelations,
+  operationalLogsRelations,
 } from "@/db/schema";
+

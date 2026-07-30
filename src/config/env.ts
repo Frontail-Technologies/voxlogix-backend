@@ -34,6 +34,30 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(DEFAULT_RATE_LIMIT_MAX_REQUESTS),
+  RATE_LIMIT_ENABLED: z.coerce.boolean().default(false),
+  STORAGE_PROVIDER: z.enum(["cloudinary", "s3"]).default("cloudinary"),
+  STORAGE_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(10),
+  CLOUDINARY_CLOUD_NAME: z.string().optional().default(""),
+  CLOUDINARY_API_KEY: z.string().optional().default(""),
+  CLOUDINARY_API_SECRET: z.string().optional().default(""),
+  CLOUDINARY_UPLOAD_FOLDER: z.string().optional().default("voxlogix"),
+  AWS_ACCESS_KEY_ID: z.string().optional().default(""),
+  AWS_SECRET_ACCESS_KEY: z.string().optional().default(""),
+  AWS_S3_REGION: z.string().optional().default(""),
+  AWS_S3_BUCKET: z.string().optional().default(""),
+  AWS_S3_ENDPOINT: z.string().optional().default(""),
+  AWS_S3_PUBLIC_BASE_URL: z.string().optional().default(""),
+  AWS_S3_UPLOAD_PREFIX: z.string().optional().default("voxlogix"),
+  GEMINI_API_KEY: z.string().optional().default(""),
+  GEMINI_EXTRACTION_MODEL: z.string().optional().default("gemini-flash-lite-latest"),
+  GEMINI_CHAT_MODEL: z.string().optional().default("gemini-flash-latest"),
+  SMTP_HOST: z.string().optional().default(""),
+  SMTP_PORT: z.coerce.number().int().positive().optional().default(587),
+  SMTP_SECURE: z.coerce.boolean().optional().default(false),
+  SMTP_USER: z.string().optional().default(""),
+  SMTP_PASSWORD: z.string().optional().default(""),
+  SMTP_FROM_EMAIL: z.string().optional().default(""),
+  SMTP_FROM_NAME: z.string().optional().default("VoxLogiX"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

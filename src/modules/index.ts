@@ -1,15 +1,53 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 
+import { activitiesRouter } from "@/modules/activities/activity.routes";
+import { aiRouter } from "@/modules/ai/ai.routes";
+import { aiUsageRouter } from "@/modules/ai-usage/ai-usage.routes";
 import { adminsRouter } from "@/modules/admins/admin.routes";
+import { authRouter } from "@/modules/auth/auth.routes";
 import { companiesRouter } from "@/modules/companies/company.routes";
+import { dashboardRouter } from "@/modules/dashboard/dashboard.routes";
+import { equipmentRouter } from "@/modules/equipment/equipment.routes";
+import { equipmentManualsRouter } from "@/modules/equipment-manuals/equipment-manual.routes";
+import { equipmentCategoriesRouter } from "@/modules/equipment-categories/equipment-category.routes";
 import { healthRouter } from "@/modules/health/health.routes";
+import { importedMasterDataRouter } from "@/modules/imported-master-data/imported-master-data.routes";
+import { issueCategoriesRouter } from "@/modules/issue-categories/issue-category.routes";
+import { locationsRouter } from "@/modules/locations/location.routes";
+import { logsRouter } from "@/modules/logs/log.routes";
+import { masterDataImportsRouter } from "@/modules/master-data-imports/master-data-import.routes";
+import { masterDataOptionsRouter } from "@/modules/master-data-options/master-data-option.routes";
 import { modulesRouter } from "@/modules/modules/module.routes";
+import { moduleCategoriesRouter } from "@/modules/module-categories/module-category.routes";
+import { moduleTypesRouter } from "@/modules/module-types/module-type.routes";
+import { notificationsRouter } from "@/modules/notifications/notification.routes";
+import { settingsRouter } from "@/modules/settings/settings.routes";
+import { uploadsRouter } from "@/modules/uploads/uploads.routes";
 
 const moduleRouter = Router();
 
 moduleRouter.use("/health", healthRouter);
+moduleRouter.use("/auth", authRouter);
 moduleRouter.use("/companies", companiesRouter);
 moduleRouter.use("/admins", adminsRouter);
 moduleRouter.use("/modules", modulesRouter);
+moduleRouter.use("/module-categories", moduleCategoriesRouter);
+moduleRouter.use("/module-types", moduleTypesRouter);
+moduleRouter.use("/equipment", equipmentRouter);
+moduleRouter.use("/equipment-manuals", equipmentManualsRouter);
+moduleRouter.use("/equipment-categories", equipmentCategoriesRouter);
+moduleRouter.use("/logs", logsRouter);
+moduleRouter.use("/master-data-imports", masterDataImportsRouter);
+moduleRouter.use("/master-data-options", masterDataOptionsRouter);
+moduleRouter.use("/locations", locationsRouter);
+moduleRouter.use("/issue-categories", issueCategoriesRouter);
+moduleRouter.use("/imported-master-data", importedMasterDataRouter);
+moduleRouter.use("/activities", activitiesRouter);
+moduleRouter.use("/ai-usage", aiUsageRouter);
+moduleRouter.use("/ai", aiRouter);
+moduleRouter.use("/settings", settingsRouter);
+moduleRouter.use("/uploads", uploadsRouter);
+moduleRouter.use("/dashboard", dashboardRouter);
+moduleRouter.use("/notifications", notificationsRouter);
 
 export { moduleRouter };

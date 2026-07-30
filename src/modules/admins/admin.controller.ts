@@ -1,5 +1,6 @@
-import type { Request, Response } from "express";
+﻿import type { Request, Response } from "express";
 
+import { uploadImageAsset } from "@/modules/uploads/uploads.service";
 import { asyncHandler } from "@/shared/helpers/async-handler";
 import { sendSuccess } from "@/shared/helpers/api-response";
 
@@ -16,15 +17,27 @@ function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value ?? "";
 }
 
+async function uploadAdminAvatar(request: Request) {
+  if (!request.file) return null;
+  return uploadImageAsset(request.file, {
+    folder: "admins",
+    context: "admin-avatar",
+    fileName: request.body.fullName ?? request.body.username ?? "admin-avatar",
+  });
+}
+
 export const getAdmins = asyncHandler(async (request: Request, response: Response) => {
   const search = typeof request.query.search === "string" ? request.query.search : undefined;
   const companyId =
     typeof request.query.companyId === "string" ? request.query.companyId : undefined;
   const status = typeof request.query.status === "string" ? request.query.status : undefined;
+  const role = typeof request.query.role === "string" ? request.query.role : undefined;
+  const joinedFrom = typeof request.query.joinedFrom === "string" ? request.query.joinedFrom : undefined;
+  const joinedTo = typeof request.query.joinedTo === "string" ? request.query.joinedTo : undefined;
   const page = Number(request.query.page ?? 1);
   const limit = Number(request.query.limit ?? 20);
 
-  const result = await listAdmins({ page, limit, search, companyId, status });
+  const result = await listAdmins({ page, limit, search, companyId, status, role, joinedFrom, joinedTo });
 
   return sendSuccess(response, {
     data: result.items,
@@ -41,7 +54,11 @@ export const getAdmin = asyncHandler(async (request: Request, response: Response
 });
 
 export const postAdmin = asyncHandler(async (request: Request, response: Response) => {
-  const admin = await createAdmin(request.body);
+  const avatar = await uploadAdminAvatar(request);
+  const admin = await createAdmin({
+    ...request.body,
+    ...(avatar ? { avatarUrl: avatar.secureUrl ?? avatar.url, avatarKey: avatar.key } : {}),
+  });
 
   return sendSuccess(response, {
     statusCode: 201,
@@ -51,7 +68,11 @@ export const postAdmin = asyncHandler(async (request: Request, response: Respons
 });
 
 export const patchAdmin = asyncHandler(async (request: Request, response: Response) => {
-  const admin = await updateAdmin(getParam(request.params.adminId), request.body);
+  const avatar = await uploadAdminAvatar(request);
+  const admin = await updateAdmin(getParam(request.params.adminId), {
+    ...request.body,
+    ...(avatar ? { avatarUrl: avatar.secureUrl ?? avatar.url, avatarKey: avatar.key } : {}),
+  });
 
   return sendSuccess(response, {
     message: "Admin updated successfully",

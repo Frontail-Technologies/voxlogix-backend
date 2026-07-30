@@ -1,4 +1,4 @@
-import type { z } from "zod";
+﻿import type { z } from "zod";
 
 import type {
   createAdminBodySchema,
@@ -16,12 +16,17 @@ export type AdminListRow = {
   id: string;
   fullName: string;
   initials: string;
+  avatarUrl: string | null;
+  avatarKey: string | null;
   username: string;
   email: string;
   phone: string;
   status: string;
+  role: string;
   joinedOn: Date;
   lastLoginAt: Date | null;
   companyId: string;
   companyName: string;
 };
+
+

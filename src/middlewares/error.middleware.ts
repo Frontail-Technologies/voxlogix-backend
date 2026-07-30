@@ -13,6 +13,8 @@ export function errorMiddleware(
   response: Response,
   _next: NextFunction,
 ) {
+  void _next;
+
   if (error instanceof ZodError) {
     return sendError(response, {
       statusCode: HTTP_STATUS.UNPROCESSABLE_ENTITY,

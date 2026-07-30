@@ -1,10 +1,12 @@
-import {
+﻿import {
   and,
   asc,
   count,
   desc,
   eq,
+  gte,
   ilike,
+  lte,
   or,
   type SQL,
 } from "drizzle-orm";
@@ -24,6 +26,7 @@ import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { buildPagination } from "@/shared/helpers/pagination";
 import { sanitizeString } from "@/shared/helpers/sanitize";
 import { hashPassword } from "@/shared/security/password";
+import { createPlatformActivity } from "@/shared/services/activity-log.service";
 
 function buildInitials(fullName: string) {
   const words = fullName
@@ -39,6 +42,9 @@ function buildAdminsFilter({
   search,
   companyId,
   status,
+  role,
+  joinedFrom,
+  joinedTo,
 }: Omit<ListAdminsInput, "page" | "limit">) {
   const filters: SQL<unknown>[] = [];
 
@@ -59,6 +65,22 @@ function buildAdminsFilter({
 
   if (status) {
     filters.push(eq(admins.status, status as typeof admins.$inferSelect.status));
+  }
+
+  if (role) {
+    filters.push(eq(admins.role, role as typeof admins.$inferSelect.role));
+  }
+
+  if (joinedFrom) {
+    const from = new Date(joinedFrom);
+    from.setHours(0, 0, 0, 0);
+    filters.push(gte(admins.joinedOn, from));
+  }
+
+  if (joinedTo) {
+    const to = new Date(joinedTo);
+    to.setHours(23, 59, 59, 999);
+    filters.push(lte(admins.joinedOn, to));
   }
 
   if (!filters.length) {
@@ -145,10 +167,13 @@ function mapAdminListItem(row: AdminListRow) {
     id: row.id,
     fullName: row.fullName,
     initials: row.initials,
+    avatarUrl: row.avatarUrl,
+    avatarKey: row.avatarKey,
     username: row.username,
     email: row.email,
     phone: row.phone,
     status: row.status,
+    role: row.role,
     joinedOn: row.joinedOn,
     lastLoginAt: row.lastLoginAt,
     company: {
@@ -178,10 +203,13 @@ export async function listAdmins(input: ListAdminsInput) {
       id: admins.id,
       fullName: admins.fullName,
       initials: admins.initials,
+      avatarUrl: admins.avatarUrl,
+      avatarKey: admins.avatarKey,
       username: admins.username,
       email: admins.email,
       phone: admins.phone,
       status: admins.status,
+      role: admins.role,
       joinedOn: admins.joinedOn,
       lastLoginAt: admins.lastLoginAt,
       companyId: companies.id,
@@ -206,6 +234,8 @@ export async function getAdminById(adminId: string) {
       id: admins.id,
       fullName: admins.fullName,
       initials: admins.initials,
+      avatarUrl: admins.avatarUrl,
+      avatarKey: admins.avatarKey,
       username: admins.username,
       email: admins.email,
       phone: admins.phone,
@@ -245,6 +275,8 @@ export async function getAdminById(adminId: string) {
     id: admin.id,
     fullName: admin.fullName,
     initials: admin.initials,
+    avatarUrl: admin.avatarUrl,
+    avatarKey: admin.avatarKey,
     username: admin.username,
     email: admin.email,
     phone: admin.phone,
@@ -288,7 +320,10 @@ export async function createAdmin(input: CreateAdminInput) {
       username: sanitizeString(input.username).toLowerCase(),
       email: sanitizeString(input.email).toLowerCase(),
       phone: sanitizeString(input.phone),
+      avatarUrl: input.avatarUrl ?? null,
+      avatarKey: input.avatarKey ?? null,
       status: input.status as typeof admins.$inferInsert.status,
+      role: input.role as typeof admins.$inferInsert.role,
       passwordHash: hashedPassword,
       requirePasswordReset: input.requirePasswordReset ?? true,
       updatedAt: now,
@@ -297,11 +332,21 @@ export async function createAdmin(input: CreateAdminInput) {
     })
     .returning({ id: admins.id });
 
+  await createPlatformActivity({
+    event: `Admin "${fullName}" created`,
+    area: "Admins",
+    action: "Created",
+    status: "Success",
+    companyId: input.companyId,
+  });
+
   return getAdminById(createdAdmin.id);
 }
 
 export async function updateAdmin(adminId: string, input: UpdateAdminInput) {
   await ensureAdminExists(adminId);
+
+  const currentAdmin = await getAdminById(adminId);
 
   if (input.companyId) {
     await ensureCompanyExists(input.companyId);
@@ -345,11 +390,31 @@ export async function updateAdmin(adminId: string, input: UpdateAdminInput) {
     updatePayload.status = input.status as typeof admins.$inferInsert.status;
   }
 
+  if (input.role) {
+    updatePayload.role = input.role as typeof admins.$inferInsert.role;
+  }
+
   if (typeof input.requirePasswordReset === "boolean") {
     updatePayload.requirePasswordReset = input.requirePasswordReset;
   }
 
+  if (input.avatarUrl !== undefined) {
+    updatePayload.avatarUrl = input.avatarUrl;
+  }
+
+  if (input.avatarKey !== undefined) {
+    updatePayload.avatarKey = input.avatarKey;
+  }
+
   await db.update(admins).set(updatePayload).where(eq(admins.id, adminId));
+
+  await createPlatformActivity({
+    event: `Admin "${updatePayload.fullName ?? currentAdmin.fullName}" updated`,
+    area: "Admins",
+    action: "Updated",
+    status: "Success",
+    companyId: updatePayload.companyId ?? currentAdmin.company.id,
+  });
 
   return getAdminById(adminId);
 }
@@ -359,6 +424,7 @@ export async function resetAdminPassword(
   input: ResetPasswordInput,
 ) {
   await ensureAdminExists(adminId);
+  const currentAdmin = await getAdminById(adminId);
 
   const hashedPassword = await hashPassword(input.temporaryPassword);
 
@@ -371,6 +437,14 @@ export async function resetAdminPassword(
     })
     .where(eq(admins.id, adminId));
 
+  await createPlatformActivity({
+    event: `Password reset issued for "${currentAdmin.fullName}"`,
+    area: "Admins",
+    action: "Updated",
+    status: "Success",
+    companyId: currentAdmin.company.id,
+  });
+
   return {
     adminId,
     requireResetOnNextLogin: input.requireResetOnNextLogin,
@@ -381,10 +455,21 @@ export async function resetAdminPassword(
 
 export async function deleteAdmin(adminId: string) {
   await ensureAdminExists(adminId);
+  const currentAdmin = await getAdminById(adminId);
 
   await db.delete(admins).where(eq(admins.id, adminId));
+
+  await createPlatformActivity({
+    event: `Admin "${currentAdmin.fullName}" deleted`,
+    area: "Admins",
+    action: "Deleted",
+    status: "Warning",
+    companyId: currentAdmin.company.id,
+  });
 
   return {
     id: adminId,
   };
 }
+
+

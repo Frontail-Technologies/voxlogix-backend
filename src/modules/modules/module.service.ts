@@ -4,12 +4,13 @@ import {
   count,
   eq,
   ilike,
+  inArray,
   or,
   type SQL,
 } from "drizzle-orm";
 
 import { db } from "@/db";
-import { moduleFields, modules } from "@/db/schema";
+import { companyModuleAccess, moduleFields, modules, moduleTypes } from "@/db/schema";
 import type {
   CreateModuleInput,
   ListModulesInput,
@@ -23,13 +24,15 @@ import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { buildPagination } from "@/shared/helpers/pagination";
 import { sanitizeString } from "@/shared/helpers/sanitize";
-import { toSlug } from "@/shared/helpers/slug";
+import { toCamelKey, toSlug } from "@/shared/helpers/slug";
+import { USER_ROLES } from "@/shared/constants";
+import { createPlatformActivity } from "@/shared/services/activity-log.service";
 
 function buildModulesFilter({
   search,
   status,
-  type,
-}: Omit<ListModulesInput, "page" | "limit">) {
+  moduleTypeId,
+}: Omit<ListModulesInput, "page" | "limit" | "companyId" | "role">) {
   const filters: SQL<unknown>[] = [];
 
   if (search) {
@@ -37,7 +40,6 @@ function buildModulesFilter({
       or(
         ilike(modules.name, `%${search}%`),
         ilike(modules.category, `%${search}%`),
-        ilike(modules.type, `%${search}%`),
       )!,
     );
   }
@@ -46,8 +48,8 @@ function buildModulesFilter({
     filters.push(eq(modules.status, status as typeof modules.$inferSelect.status));
   }
 
-  if (type) {
-    filters.push(eq(modules.type, type as typeof modules.$inferSelect.type));
+  if (moduleTypeId) {
+    filters.push(eq(modules.moduleTypeId, moduleTypeId));
   }
 
   if (!filters.length) {
@@ -55,6 +57,34 @@ function buildModulesFilter({
   }
 
   return and(...filters);
+}
+
+async function enabledModuleIdsForCompany(companyId: string) {
+  const rows = await db
+    .select({ moduleId: companyModuleAccess.moduleId })
+    .from(companyModuleAccess)
+    .where(and(eq(companyModuleAccess.companyId, companyId), eq(companyModuleAccess.enabled, true)));
+
+  return rows.map((row) => row.moduleId);
+}
+
+function shouldFilterByCompanyAccess(input: ListModulesInput) {
+  return Boolean(input.companyId) && input.role !== USER_ROLES.MASTER;
+}
+async function ensureModuleTypeExists(moduleTypeId: string) {
+  const [existing] = await db
+    .select({ id: moduleTypes.id })
+    .from(moduleTypes)
+    .where(eq(moduleTypes.id, moduleTypeId))
+    .limit(1);
+
+  if (!existing) {
+    throw new AppError({
+      message: "Selected module type does not exist.",
+      statusCode: HTTP_STATUS.BAD_REQUEST,
+      errorCode: ERROR_CODES.VALIDATION_ERROR,
+    });
+  }
 }
 
 async function ensureModuleExists(moduleId: string) {
@@ -133,13 +163,21 @@ function mapModuleListItem(row: ModuleListRow) {
     id: row.id,
     name: row.name,
     slug: row.slug,
+    moduleTypeId: row.moduleTypeId,
     type: row.type,
     category: row.category,
     status: row.status,
     availabilityText: row.availabilityText,
     icon: row.icon,
     color: row.color,
+    mediaUrl: row.mediaUrl,
+    mediaKey: row.mediaKey,
     description: row.description,
+    voiceEnabled: row.voiceEnabled,
+    feedEnabled: row.feedEnabled,
+    feedOnlyOnAlert: row.feedOnlyOnAlert,
+    requiresVoicePlayback: row.requiresVoicePlayback,
+    maxAttachments: row.maxAttachments,
     fieldsCount: row.fieldsCount,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -159,7 +197,20 @@ async function syncModuleFieldsCount(moduleId: string) {
 }
 
 export async function listModules(input: ListModulesInput) {
-  const where = buildModulesFilter(input);
+  const filters: SQL<unknown>[] = [];
+  const baseWhere = buildModulesFilter(input);
+  if (baseWhere) filters.push(baseWhere);
+
+  if (shouldFilterByCompanyAccess(input) && input.companyId) {
+    const enabledModuleIds = await enabledModuleIdsForCompany(input.companyId);
+    if (!enabledModuleIds.length) {
+      const pagination = buildPagination({ page: input.page, limit: input.limit, totalItems: 0 });
+      return { items: [], pagination };
+    }
+    filters.push(inArray(modules.id, enabledModuleIds));
+  }
+
+  const where = filters.length ? and(...filters) : undefined;
 
   const [{ totalItems }] = await db
     .select({ totalItems: count() })
@@ -177,18 +228,27 @@ export async function listModules(input: ListModulesInput) {
       id: modules.id,
       name: modules.name,
       slug: modules.slug,
-      type: modules.type,
+      moduleTypeId: modules.moduleTypeId,
+      type: moduleTypes.name,
       category: modules.category,
       status: modules.status,
       availabilityText: modules.availabilityText,
       icon: modules.icon,
       color: modules.color,
+      mediaUrl: modules.mediaUrl,
+      mediaKey: modules.mediaKey,
       description: modules.description,
+      voiceEnabled: modules.voiceEnabled,
+      feedEnabled: modules.feedEnabled,
+      feedOnlyOnAlert: modules.feedOnlyOnAlert,
+      requiresVoicePlayback: modules.requiresVoicePlayback,
+      maxAttachments: modules.maxAttachments,
       fieldsCount: modules.fieldsCount,
       createdAt: modules.createdAt,
       updatedAt: modules.updatedAt,
     })
     .from(modules)
+    .innerJoin(moduleTypes, eq(modules.moduleTypeId, moduleTypes.id))
     .where(where)
     .orderBy(asc(modules.name))
     .limit(pagination.limit)
@@ -206,19 +266,28 @@ export async function getModuleById(moduleId: string) {
       id: modules.id,
       name: modules.name,
       slug: modules.slug,
-      type: modules.type,
+      moduleTypeId: modules.moduleTypeId,
+      type: moduleTypes.name,
       category: modules.category,
       status: modules.status,
       availabilityText: modules.availabilityText,
       icon: modules.icon,
       color: modules.color,
+      mediaUrl: modules.mediaUrl,
+      mediaKey: modules.mediaKey,
       description: modules.description,
       promptPreview: modules.promptPreview,
+      voiceEnabled: modules.voiceEnabled,
+      feedEnabled: modules.feedEnabled,
+      feedOnlyOnAlert: modules.feedOnlyOnAlert,
+      requiresVoicePlayback: modules.requiresVoicePlayback,
+      maxAttachments: modules.maxAttachments,
       fieldsCount: modules.fieldsCount,
       createdAt: modules.createdAt,
       updatedAt: modules.updatedAt,
     })
     .from(modules)
+    .innerJoin(moduleTypes, eq(modules.moduleTypeId, moduleTypes.id))
     .where(eq(modules.id, moduleId))
     .limit(1);
 
@@ -242,20 +311,28 @@ export async function getModuleById(moduleId: string) {
 export async function createModule(input: CreateModuleInput) {
   const name = sanitizeString(input.name);
   await ensureModuleNameUnique(name);
+  await ensureModuleTypeExists(input.moduleTypeId);
 
   const [created] = await db
     .insert(modules)
     .values({
       name,
       slug: toSlug(name),
-      type: input.type as typeof modules.$inferInsert.type,
+      moduleTypeId: input.moduleTypeId,
       category: sanitizeString(input.category),
       status: input.status as typeof modules.$inferInsert.status,
       availabilityText: sanitizeString(input.availabilityText),
       icon: sanitizeString(input.icon),
       color: input.color,
       description: input.description ? sanitizeString(input.description) : null,
+      mediaUrl: input.mediaUrl ?? null,
+      mediaKey: input.mediaKey ?? null,
       promptPreview: input.promptPreview?.trim() || null,
+      voiceEnabled: input.voiceEnabled,
+      feedEnabled: input.feedEnabled,
+      feedOnlyOnAlert: input.feedOnlyOnAlert,
+      requiresVoicePlayback: input.requiresVoicePlayback,
+      maxAttachments: input.maxAttachments,
       fieldsCount: input.fields?.length ?? 0,
       updatedAt: new Date(),
     })
@@ -267,10 +344,15 @@ export async function createModule(input: CreateModuleInput) {
       input.fields.map((field) => ({
         moduleId: created.id,
         label: sanitizeString(field.label),
-        key: sanitizeString(field.key),
+        key: field.key ? sanitizeString(field.key) : toCamelKey(field.label),
         type: field.type,
         required: field.required,
         aiExtract: field.aiExtract,
+        sourceType: field.sourceType,
+        sourceKey: field.sourceKey ?? null,
+        feedVisible: field.feedVisible,
+        reportVisible: field.reportVisible,
+        validationRules: field.validationRules ?? null,
         sortOrder: field.sortOrder,
         options: field.options ?? null,
         createdAt: now,
@@ -280,12 +362,20 @@ export async function createModule(input: CreateModuleInput) {
   }
 
   await syncModuleFieldsCount(created.id);
+  await createPlatformActivity({
+    event: `Module "${name}" created`,
+    area: "Modules",
+    action: "Created",
+    status: "Success",
+    companyNameSnapshot: "Platform",
+  });
 
   return getModuleById(created.id);
 }
 
 export async function updateModule(moduleId: string, input: UpdateModuleInput) {
   await ensureModuleExists(moduleId);
+  const currentModule = await getModuleById(moduleId);
 
   if (input.name) {
     await ensureModuleNameUnique(sanitizeString(input.name), moduleId);
@@ -301,8 +391,9 @@ export async function updateModule(moduleId: string, input: UpdateModuleInput) {
     updatePayload.slug = toSlug(name);
   }
 
-  if (input.type) {
-    updatePayload.type = input.type as typeof modules.$inferInsert.type;
+  if (input.moduleTypeId) {
+    await ensureModuleTypeExists(input.moduleTypeId);
+    updatePayload.moduleTypeId = input.moduleTypeId;
   }
 
   if (input.category) {
@@ -329,18 +420,61 @@ export async function updateModule(moduleId: string, input: UpdateModuleInput) {
     updatePayload.description = sanitizeString(input.description);
   }
 
+  if (input.mediaUrl !== undefined) {
+    updatePayload.mediaUrl = input.mediaUrl;
+  }
+
+  if (input.mediaKey !== undefined) {
+    updatePayload.mediaKey = input.mediaKey;
+  }
+
   if (typeof input.promptPreview === "string") {
     updatePayload.promptPreview = input.promptPreview.trim();
   }
 
+  if (typeof input.voiceEnabled === "boolean") {
+    updatePayload.voiceEnabled = input.voiceEnabled;
+  }
+
+  if (typeof input.feedEnabled === "boolean") {
+    updatePayload.feedEnabled = input.feedEnabled;
+  }
+
+  if (typeof input.feedOnlyOnAlert === "boolean") {
+    updatePayload.feedOnlyOnAlert = input.feedOnlyOnAlert;
+  }
+
+  if (typeof input.requiresVoicePlayback === "boolean") {
+    updatePayload.requiresVoicePlayback = input.requiresVoicePlayback;
+  }
+
+  if (typeof input.maxAttachments === "number") {
+    updatePayload.maxAttachments = input.maxAttachments;
+  }
+
   await db.update(modules).set(updatePayload).where(eq(modules.id, moduleId));
+
+  await createPlatformActivity({
+    event: `Module "${updatePayload.name ?? currentModule.name}" updated`,
+    area: "Modules",
+    action: "Updated",
+    status: "Success",
+    companyNameSnapshot: "Platform",
+  });
 
   return getModuleById(moduleId);
 }
 
 export async function deleteModule(moduleId: string) {
-  await ensureModuleExists(moduleId);
+  const currentModule = await getModuleById(moduleId);
   await db.delete(modules).where(eq(modules.id, moduleId));
+  await createPlatformActivity({
+    event: `Module "${currentModule.name}" deleted`,
+    area: "Modules",
+    action: "Deleted",
+    status: "Warning",
+    companyNameSnapshot: "Platform",
+  });
   return { id: moduleId };
 }
 
@@ -356,6 +490,11 @@ export async function getModuleFields(moduleId: string) {
       type: moduleFields.type,
       required: moduleFields.required,
       aiExtract: moduleFields.aiExtract,
+      sourceType: moduleFields.sourceType,
+      sourceKey: moduleFields.sourceKey,
+      feedVisible: moduleFields.feedVisible,
+      reportVisible: moduleFields.reportVisible,
+      validationRules: moduleFields.validationRules,
       sortOrder: moduleFields.sortOrder,
       options: moduleFields.options,
       createdAt: moduleFields.createdAt,
@@ -373,17 +512,23 @@ export async function createModuleField(
   input: ModuleFieldInput,
 ) {
   await ensureModuleExists(moduleId);
-  await ensureFieldKeyUnique(moduleId, sanitizeString(input.key));
+  const key = input.key ? sanitizeString(input.key) : toCamelKey(input.label);
+  await ensureFieldKeyUnique(moduleId, key);
 
   const [created] = await db
     .insert(moduleFields)
     .values({
       moduleId,
       label: sanitizeString(input.label),
-      key: sanitizeString(input.key),
+      key,
       type: input.type,
       required: input.required,
       aiExtract: input.aiExtract,
+      sourceType: input.sourceType,
+      sourceKey: input.sourceKey ?? null,
+      feedVisible: input.feedVisible,
+      reportVisible: input.reportVisible,
+      validationRules: input.validationRules ?? null,
       sortOrder: input.sortOrder,
       options: input.options ?? null,
       updatedAt: new Date(),
@@ -391,6 +536,13 @@ export async function createModuleField(
     .returning({ id: moduleFields.id });
 
   await syncModuleFieldsCount(moduleId);
+  await createPlatformActivity({
+    event: `Field "${input.label}" added to module`,
+    area: "Modules",
+    action: "Created",
+    status: "Success",
+    companyNameSnapshot: "Platform",
+  });
 
   const fields = await getModuleFields(moduleId);
   return fields.find((field) => field.id === created.id) ?? null;
@@ -432,6 +584,26 @@ export async function updateModuleField(
     updatePayload.aiExtract = input.aiExtract;
   }
 
+  if (input.sourceType) {
+    updatePayload.sourceType = input.sourceType;
+  }
+
+  if (input.sourceKey !== undefined) {
+    updatePayload.sourceKey = input.sourceKey;
+  }
+
+  if (typeof input.feedVisible === "boolean") {
+    updatePayload.feedVisible = input.feedVisible;
+  }
+
+  if (typeof input.reportVisible === "boolean") {
+    updatePayload.reportVisible = input.reportVisible;
+  }
+
+  if (input.validationRules !== undefined) {
+    updatePayload.validationRules = input.validationRules;
+  }
+
   if (typeof input.sortOrder === "number") {
     updatePayload.sortOrder = input.sortOrder;
   }
@@ -444,6 +616,14 @@ export async function updateModuleField(
     .update(moduleFields)
     .set(updatePayload)
     .where(and(eq(moduleFields.moduleId, moduleId), eq(moduleFields.id, fieldId)));
+
+  await createPlatformActivity({
+    event: `Module field updated`,
+    area: "Modules",
+    action: "Updated",
+    status: "Success",
+    companyNameSnapshot: "Platform",
+  });
 
   const fields = await getModuleFields(moduleId);
   return fields.find((field) => field.id === fieldId) ?? null;
@@ -458,6 +638,13 @@ export async function deleteModuleField(moduleId: string, fieldId: string) {
     .where(and(eq(moduleFields.moduleId, moduleId), eq(moduleFields.id, fieldId)));
 
   await syncModuleFieldsCount(moduleId);
+  await createPlatformActivity({
+    event: `Module field deleted`,
+    area: "Modules",
+    action: "Deleted",
+    status: "Warning",
+    companyNameSnapshot: "Platform",
+  });
 
   return { id: fieldId, moduleId };
 }

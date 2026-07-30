@@ -1,6 +1,8 @@
-import { Router } from "express";
+﻿import { Router } from "express";
 
+import { parseMultipartPayload } from "@/middlewares/multipart-payload.middleware";
 import { validate } from "@/middlewares/validate.middleware";
+import { singleImageUploadMiddleware } from "@/modules/uploads/uploads.middleware";
 
 import {
   getAdmin,
@@ -22,9 +24,17 @@ const adminsRouter = Router();
 
 adminsRouter.get("/", validate({ query: listAdminsQuerySchema }), getAdmins);
 adminsRouter.get("/:adminId", validate({ params: adminIdParamsSchema }), getAdmin);
-adminsRouter.post("/", validate({ body: createAdminBodySchema }), postAdmin);
+adminsRouter.post(
+  "/",
+  singleImageUploadMiddleware,
+  parseMultipartPayload,
+  validate({ body: createAdminBodySchema }),
+  postAdmin,
+);
 adminsRouter.patch(
   "/:adminId",
+  singleImageUploadMiddleware,
+  parseMultipartPayload,
   validate({ params: adminIdParamsSchema, body: updateAdminBodySchema }),
   patchAdmin,
 );
