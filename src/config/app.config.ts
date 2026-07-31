@@ -12,6 +12,7 @@ export const appConfig = {
   environment: env.NODE_ENV,
   apiBasePath: API_BASE_PATH,
   bodySizeLimit: env.BODY_SIZE_LIMIT || DEFAULT_BODY_SIZE_LIMIT,
+  cookieDomain: env.COOKIE_DOMAIN,
   cookieNames: {
     accessToken: ACCESS_TOKEN_COOKIE_NAME,
     refreshToken: REFRESH_TOKEN_COOKIE_NAME,

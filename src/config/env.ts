@@ -23,6 +23,7 @@ const envSchema = z.object({
   CLIENT_WEB_URL: z.url(),
   CLIENT_MOBILE_URL: z.string().optional().default(""),
   CORS_ORIGIN: z.string().min(1),
+  COOKIE_DOMAIN: z.string().optional(),
   BODY_SIZE_LIMIT: z.string().default(DEFAULT_BODY_SIZE_LIMIT),
   RATE_LIMIT_WINDOW_MS: z.coerce
     .number()

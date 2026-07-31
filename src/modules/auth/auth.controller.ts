@@ -23,6 +23,7 @@ const sessionCookieOptions: CookieOptions = {
   secure: env.NODE_ENV === "production",
   sameSite: "lax",
   path: "/",
+  ...(appConfig.cookieDomain ? { domain: appConfig.cookieDomain } : {}),
 };
 
 function setSessionCookies(response: Response, accessToken: string, refreshToken: string) {
