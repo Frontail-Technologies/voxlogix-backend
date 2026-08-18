@@ -44,17 +44,32 @@ function buildLogsFilter(input: Omit<ListLogsInput, "page" | "limit">) {
   if (input.equipmentId) filters.push(eq(operationalLogs.equipmentId, input.equipmentId));
   if (input.createdById) filters.push(eq(operationalLogs.createdById, input.createdById));
   if (input.scope === "feed") {
-    const alertCondition = sql<boolean>`(
+    const structuredReadingAlertCondition = sql<boolean>`(
+      (
+        ${operationalLogs.extractedFields}->>'readingType' = 'MEASURING_POINT'
+        and lower(coalesce(${operationalLogs.extractedFields}->>'isAlert', '')) = 'true'
+        and ${operationalLogs.extractedFields}->>'measurementStatus' = 'OUT_OF_LIMIT'
+      )
+      or (
+        ${operationalLogs.extractedFields}->>'readingType' = 'METER_COUNTER'
+        and lower(coalesce(${operationalLogs.extractedFields}->>'isAlert', '')) = 'true'
+        and ${operationalLogs.extractedFields}->>'counterStatus' = 'HIGH_DEVIATION'
+      )
+    )`;
+    const legacyAlertCondition = sql<boolean>`(
+      coalesce(${operationalLogs.extractedFields}->>'readingType', '') = ''
+      and (
       lower(${operationalLogs.severity}) in ('critical', 'high')
       or lower(${operationalLogs.status}) in ('alert', 'abnormal', 'out_of_limit', 'out of limit', 'high_deviation', 'high deviation')
       or lower(coalesce(${operationalLogs.extractedFields}->>'isOutOfLimit', '')) in ('true', 'yes', 'out_of_limit', 'out of limit')
       or lower(coalesce(${operationalLogs.extractedFields}->>'deviationFlag', '')) in ('true', 'yes', 'alert', 'abnormal', 'out_of_limit', 'out of limit', 'high_deviation', 'high deviation')
+      )
     )`;
 
     filters.push(
       sql<boolean>`(
         ${modules.feedEnabled} = true
-        or (${modules.feedOnlyOnAlert} = true and ${alertCondition})
+        or (${modules.feedOnlyOnAlert} = true and (${structuredReadingAlertCondition} or ${legacyAlertCondition}))
       )`,
     );
   }

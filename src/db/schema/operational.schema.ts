@@ -1,5 +1,6 @@
 ﻿import { relations } from "drizzle-orm";
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -340,6 +341,86 @@ export const operationalLogs = pgTable(
   }),
 );
 
+export const measuringPointReadings = pgTable(
+  "measuring_point_readings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    pointId: uuid("point_id")
+      .notNull()
+      .references(() => measuringPoints.id, { onDelete: "cascade" }),
+    equipmentId: uuid("equipment_id").references(() => equipmentAssets.id, { onDelete: "set null" }),
+    operationalLogId: uuid("operational_log_id").references(() => operationalLogs.id, { onDelete: "set null" }),
+    pointCode: varchar("point_code", { length: 80 }).notNull(),
+    equipmentCodeSnapshot: varchar("equipment_code_snapshot", { length: 80 }),
+    equipmentNameSnapshot: varchar("equipment_name_snapshot", { length: 160 }),
+    measurementNameSnapshot: varchar("measurement_name_snapshot", { length: 180 }).notNull(),
+    measurementUnitSnapshot: varchar("measurement_unit_snapshot", { length: 40 }).notNull(),
+    measuredValue: numeric("measured_value", { precision: 16, scale: 4 }).notNull(),
+    targetValueSnapshot: numeric("target_value_snapshot", { precision: 14, scale: 4 }),
+    lowerLimitSnapshot: numeric("lower_limit_snapshot", { precision: 14, scale: 4 }),
+    upperLimitSnapshot: numeric("upper_limit_snapshot", { precision: 14, scale: 4 }),
+    deviationFromTarget: numeric("deviation_from_target", { precision: 16, scale: 4 }),
+    deviationPercent: numeric("deviation_percent", { precision: 10, scale: 4 }),
+    measurementStatus: varchar("measurement_status", { length: 40 }).notNull().default("NORMAL"),
+    alertSeveritySnapshot: varchar("alert_severity_snapshot", { length: 40 }).notNull().default("MEDIUM"),
+    isAlert: boolean("is_alert").notNull().default(false),
+    reportedById: uuid("reported_by_id").references(() => admins.id, { onDelete: "set null" }),
+    reportedAt: timestamp("reported_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    companyIndex: index("measuring_point_readings_company_id_idx").on(table.companyId),
+    pointTimeIndex: index("measuring_point_readings_point_reported_at_idx").on(table.pointId, table.reportedAt),
+    alertIndex: index("measuring_point_readings_alert_idx").on(table.companyId, table.isAlert),
+    logIndex: index("measuring_point_readings_log_id_idx").on(table.operationalLogId),
+  }),
+);
+
+export const meterCounterReadings = pgTable(
+  "meter_counter_readings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    counterId: uuid("counter_id")
+      .notNull()
+      .references(() => meterCounters.id, { onDelete: "cascade" }),
+    equipmentId: uuid("equipment_id").references(() => equipmentAssets.id, { onDelete: "set null" }),
+    operationalLogId: uuid("operational_log_id").references(() => operationalLogs.id, { onDelete: "set null" }),
+    counterCode: varchar("counter_code", { length: 80 }).notNull(),
+    equipmentCodeSnapshot: varchar("equipment_code_snapshot", { length: 80 }),
+    locationSnapshot: varchar("location_snapshot", { length: 160 }),
+    counterNameSnapshot: varchar("counter_name_snapshot", { length: 180 }).notNull(),
+    counterUnitSnapshot: varchar("counter_unit_snapshot", { length: 40 }).notNull(),
+    meterTypeSnapshot: varchar("meter_type_snapshot", { length: 100 }).notNull(),
+    currentReading: numeric("current_reading", { precision: 16, scale: 4 }).notNull(),
+    previousReading: numeric("previous_reading", { precision: 16, scale: 4 }),
+    consumptionDelta: numeric("consumption_delta", { precision: 16, scale: 4 }),
+    previousReadingAt: timestamp("previous_reading_at", { withTimezone: true }),
+    expectedDailyConsumptionSnapshot: numeric("expected_daily_consumption_snapshot", { precision: 16, scale: 4 }),
+    expectedConsumptionForPeriod: numeric("expected_consumption_for_period", { precision: 16, scale: 4 }),
+    deviation: numeric("deviation", { precision: 16, scale: 4 }),
+    deviationPercent: numeric("deviation_percent", { precision: 10, scale: 4 }),
+    alertDeviationPctSnapshot: numeric("alert_deviation_pct_snapshot", { precision: 8, scale: 2 }),
+    resetValueSnapshot: numeric("reset_value_snapshot", { precision: 16, scale: 4 }),
+    counterStatus: varchar("counter_status", { length: 40 }).notNull().default("NORMAL"),
+    isAlert: boolean("is_alert").notNull().default(false),
+    reportedById: uuid("reported_by_id").references(() => admins.id, { onDelete: "set null" }),
+    reportedAt: timestamp("reported_at", { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    companyIndex: index("meter_counter_readings_company_id_idx").on(table.companyId),
+    counterTimeIndex: index("meter_counter_readings_counter_reported_at_idx").on(table.counterId, table.reportedAt),
+    alertIndex: index("meter_counter_readings_alert_idx").on(table.companyId, table.isAlert),
+    logIndex: index("meter_counter_readings_log_id_idx").on(table.operationalLogId),
+  }),
+);
+
 export const logAttachments = pgTable(
   "log_attachments",
   {
@@ -401,9 +482,25 @@ export const measuringPointsRelations = relations(measuringPoints, ({ one }) => 
   equipment: one(equipmentAssets, { fields: [measuringPoints.equipmentId], references: [equipmentAssets.id] }),
 }));
 
+export const measuringPointReadingsRelations = relations(measuringPointReadings, ({ one }) => ({
+  company: one(companies, { fields: [measuringPointReadings.companyId], references: [companies.id] }),
+  point: one(measuringPoints, { fields: [measuringPointReadings.pointId], references: [measuringPoints.id] }),
+  equipment: one(equipmentAssets, { fields: [measuringPointReadings.equipmentId], references: [equipmentAssets.id] }),
+  log: one(operationalLogs, { fields: [measuringPointReadings.operationalLogId], references: [operationalLogs.id] }),
+  reportedBy: one(admins, { fields: [measuringPointReadings.reportedById], references: [admins.id] }),
+}));
+
 export const meterCountersRelations = relations(meterCounters, ({ one }) => ({
   company: one(companies, { fields: [meterCounters.companyId], references: [companies.id] }),
   equipment: one(equipmentAssets, { fields: [meterCounters.equipmentId], references: [equipmentAssets.id] }),
+}));
+
+export const meterCounterReadingsRelations = relations(meterCounterReadings, ({ one }) => ({
+  company: one(companies, { fields: [meterCounterReadings.companyId], references: [companies.id] }),
+  counter: one(meterCounters, { fields: [meterCounterReadings.counterId], references: [meterCounters.id] }),
+  equipment: one(equipmentAssets, { fields: [meterCounterReadings.equipmentId], references: [equipmentAssets.id] }),
+  log: one(operationalLogs, { fields: [meterCounterReadings.operationalLogId], references: [operationalLogs.id] }),
+  reportedBy: one(admins, { fields: [meterCounterReadings.reportedById], references: [admins.id] }),
 }));
 
 export const kaizenCategoriesRelations = relations(kaizenCategories, ({ one }) => ({
