@@ -18,25 +18,27 @@ import {
   verifyPasswordResetOtp,
 } from "./auth.service";
 
-const sessionCookieOptions: CookieOptions = {
-  httpOnly: true,
-  secure: env.NODE_ENV === "production",
-  sameSite: "lax",
-  path: "/",
-  ...(appConfig.cookieDomain ? { domain: appConfig.cookieDomain } : {}),
-};
+function getSessionCookieOptions(): CookieOptions {
+  return {
+    httpOnly: true,
+    secure: env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    ...(appConfig.cookieDomain ? { domain: appConfig.cookieDomain } : {}),
+  };
+}
 
 function setSessionCookies(response: Response, accessToken: string, refreshToken: string) {
-  response.cookie(appConfig.cookieNames.accessToken, accessToken, sessionCookieOptions);
-  response.cookie(appConfig.cookieNames.refreshToken, refreshToken, sessionCookieOptions);
+  response.cookie(appConfig.cookieNames.accessToken, accessToken, getSessionCookieOptions());
+  response.cookie(appConfig.cookieNames.refreshToken, refreshToken, getSessionCookieOptions());
 }
 
 function clearSessionCookies(response: Response) {
-  response.clearCookie(appConfig.cookieNames.accessToken, sessionCookieOptions);
-  response.clearCookie(appConfig.cookieNames.refreshToken, sessionCookieOptions);
+  response.clearCookie(appConfig.cookieNames.accessToken, getSessionCookieOptions());
+  response.clearCookie(appConfig.cookieNames.refreshToken, getSessionCookieOptions());
 }
 function isMobileClient(request: Request) {
-  return request.headers["x-client-platform"] === "mobile";
+  return request.headers["x-client-platform"] === "mobile" || request.query.client === "mobile";
 }
 
 function sessionResponseData(request: Request, input: { user: unknown; accessToken: string; refreshToken: string }) {

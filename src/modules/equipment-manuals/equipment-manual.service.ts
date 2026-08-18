@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, ilike, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { PDFParse } from "pdf-parse";
 
 import { db } from "@/db";
@@ -176,26 +176,31 @@ export async function listEquipmentManuals(input: ListEquipmentManualsInput) {
   const where = buildManualFilter(input);
   const [{ totalItems }] = await db.select({ totalItems: count() }).from(equipmentManuals).innerJoin(equipmentAssets, eq(equipmentManuals.equipmentId, equipmentAssets.id)).where(where);
   const pagination = buildPagination({ page: input.page, limit: input.limit, totalItems });
+  // Metadata-only listing: no remote PDF fetch/parse here. Lazy extraction (ensureManualContextExtracted)
+  // stays scoped to the single-manual detail path (getEquipmentManual), so opening one stuck/pending
+  // manual triggers at most one extraction instead of every row on every page load.
   const rows = await db
-    .select({ id: equipmentManuals.id, equipmentId: equipmentManuals.equipmentId, title: equipmentManuals.title, fileUrl: equipmentManuals.fileUrl, fileKey: equipmentManuals.fileKey, fileName: equipmentManuals.fileName, mimeType: equipmentManuals.mimeType, fileSize: equipmentManuals.fileSize, status: equipmentManuals.status, extractedText: equipmentManuals.extractedText, createdAt: equipmentManuals.createdAt, updatedAt: equipmentManuals.updatedAt, equipment: { id: equipmentAssets.id, equipmentCode: equipmentAssets.equipmentCode, name: equipmentAssets.name } })
+    .select({
+      id: equipmentManuals.id,
+      equipmentId: equipmentManuals.equipmentId,
+      title: equipmentManuals.title,
+      fileUrl: equipmentManuals.fileUrl,
+      fileKey: equipmentManuals.fileKey,
+      fileName: equipmentManuals.fileName,
+      mimeType: equipmentManuals.mimeType,
+      fileSize: equipmentManuals.fileSize,
+      status: equipmentManuals.status,
+      extractedTextLength: sql<number>`coalesce(length(${equipmentManuals.extractedText}), 0)`,
+      createdAt: equipmentManuals.createdAt,
+      updatedAt: equipmentManuals.updatedAt,
+      equipment: { id: equipmentAssets.id, equipmentCode: equipmentAssets.equipmentCode, name: equipmentAssets.name },
+    })
     .from(equipmentManuals)
     .innerJoin(equipmentAssets, eq(equipmentManuals.equipmentId, equipmentAssets.id))
     .where(where)
     .orderBy(desc(equipmentManuals.updatedAt))
     .limit(pagination.limit)
     .offset(pagination.offset);
-
-  for (const row of rows) {
-    const manualText = await ensureManualContextExtracted({ companyId: input.companyId, equipmentId: row.equipmentId, manualId: row.id, manualUrl: row.fileUrl ?? "", mimeType: row.mimeType, status: row.status, extractedText: row.extractedText });
-    if (manualText) {
-      row.status = "READY";
-      row.extractedText = manualText;
-      row.updatedAt = new Date();
-    } else if (row.status === "PROCESSING" && row.fileUrl) {
-      row.status = "FAILED";
-      row.updatedAt = new Date();
-    }
-  }
 
   return { items: rows, pagination };
 }
