@@ -32,6 +32,10 @@ function makeLogNumber() {
   return `LOG-${Date.now().toString().slice(-8)}`;
 }
 
+function makeReadingReportLogId() {
+  return `CT-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
 function toNumberPayload(value: string | number | null | undefined) {
   return nullableNumber(value);
 }
@@ -348,6 +352,7 @@ export async function createMeterCounterReading(input: MeterCounterReadingInput)
         counterId: counter.id,
         equipmentId: counter.equipmentId,
         operationalLogId,
+        reportLogId: makeReadingReportLogId(),
         counterCode: counter.counterCode,
         equipmentCodeSnapshot: counter.equipment?.equipmentCode ?? counter.equipmentCodeSnapshot,
         locationSnapshot: counter.location,
@@ -423,6 +428,7 @@ export async function listMeterCounterReadings(companyId: string, counterId: str
   const rows = await db
     .select({
       id: meterCounterReadings.id,
+      reportLogId: meterCounterReadings.reportLogId,
       counterCode: meterCounterReadings.counterCode,
       counterName: meterCounterReadings.counterNameSnapshot,
       counterUnit: meterCounterReadings.counterUnitSnapshot,

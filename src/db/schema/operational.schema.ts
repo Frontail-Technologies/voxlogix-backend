@@ -353,6 +353,7 @@ export const measuringPointReadings = pgTable(
       .references(() => measuringPoints.id, { onDelete: "cascade" }),
     equipmentId: uuid("equipment_id").references(() => equipmentAssets.id, { onDelete: "set null" }),
     operationalLogId: uuid("operational_log_id").references(() => operationalLogs.id, { onDelete: "set null" }),
+    reportLogId: varchar("report_log_id", { length: 80 }).notNull(),
     pointCode: varchar("point_code", { length: 80 }).notNull(),
     equipmentCodeSnapshot: varchar("equipment_code_snapshot", { length: 80 }),
     equipmentNameSnapshot: varchar("equipment_name_snapshot", { length: 160 }),
@@ -376,6 +377,10 @@ export const measuringPointReadings = pgTable(
     pointTimeIndex: index("measuring_point_readings_point_reported_at_idx").on(table.pointId, table.reportedAt),
     alertIndex: index("measuring_point_readings_alert_idx").on(table.companyId, table.isAlert),
     logIndex: index("measuring_point_readings_log_id_idx").on(table.operationalLogId),
+    companyReportLogIndex: uniqueIndex("measuring_point_readings_company_report_log_uidx").on(
+      table.companyId,
+      table.reportLogId,
+    ),
   }),
 );
 
@@ -391,6 +396,7 @@ export const meterCounterReadings = pgTable(
       .references(() => meterCounters.id, { onDelete: "cascade" }),
     equipmentId: uuid("equipment_id").references(() => equipmentAssets.id, { onDelete: "set null" }),
     operationalLogId: uuid("operational_log_id").references(() => operationalLogs.id, { onDelete: "set null" }),
+    reportLogId: varchar("report_log_id", { length: 80 }).notNull(),
     counterCode: varchar("counter_code", { length: 80 }).notNull(),
     equipmentCodeSnapshot: varchar("equipment_code_snapshot", { length: 80 }),
     locationSnapshot: varchar("location_snapshot", { length: 160 }),
@@ -418,6 +424,10 @@ export const meterCounterReadings = pgTable(
     counterTimeIndex: index("meter_counter_readings_counter_reported_at_idx").on(table.counterId, table.reportedAt),
     alertIndex: index("meter_counter_readings_alert_idx").on(table.companyId, table.isAlert),
     logIndex: index("meter_counter_readings_log_id_idx").on(table.operationalLogId),
+    companyReportLogIndex: uniqueIndex("meter_counter_readings_company_report_log_uidx").on(
+      table.companyId,
+      table.reportLogId,
+    ),
   }),
 );
 

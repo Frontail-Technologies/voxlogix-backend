@@ -23,6 +23,7 @@ import { modulesRouter } from "@/modules/modules/module.routes";
 import { moduleCategoriesRouter } from "@/modules/module-categories/module-category.routes";
 import { moduleTypesRouter } from "@/modules/module-types/module-type.routes";
 import { notificationsRouter } from "@/modules/notifications/notification.routes";
+import { reportsRouter } from "@/modules/reports/report.routes";
 import { settingsRouter } from "@/modules/settings/settings.routes";
 import { uploadsRouter } from "@/modules/uploads/uploads.routes";
 
@@ -53,5 +54,6 @@ moduleRouter.use("/settings", settingsRouter);
 moduleRouter.use("/uploads", uploadsRouter);
 moduleRouter.use("/dashboard", dashboardRouter);
 moduleRouter.use("/notifications", notificationsRouter);
+moduleRouter.use("/reports", reportsRouter);
 
 export { moduleRouter };

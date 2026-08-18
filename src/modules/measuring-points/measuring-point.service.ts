@@ -32,6 +32,10 @@ function makeLogNumber() {
   return `LOG-${Date.now().toString().slice(-8)}`;
 }
 
+function makeReadingReportLogId() {
+  return `MP-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+}
+
 function toNumberPayload(value: string | number | null | undefined) {
   return nullableNumber(value);
 }
@@ -281,6 +285,7 @@ export async function createMeasuringPointReading(input: MeasuringPointReadingIn
         pointId: point.id,
         equipmentId: point.equipmentId,
         operationalLogId,
+        reportLogId: makeReadingReportLogId(),
         pointCode: point.pointCode,
         equipmentCodeSnapshot: point.equipment?.equipmentCode ?? point.equipmentCodeSnapshot,
         equipmentNameSnapshot: point.equipment?.name ?? point.equipmentNameSnapshot,
@@ -347,6 +352,7 @@ export async function listMeasuringPointReadings(companyId: string, pointId: str
   const rows = await db
     .select({
       id: measuringPointReadings.id,
+      reportLogId: measuringPointReadings.reportLogId,
       pointCode: measuringPointReadings.pointCode,
       measurementName: measuringPointReadings.measurementNameSnapshot,
       measurementUnit: measuringPointReadings.measurementUnitSnapshot,
