@@ -27,6 +27,9 @@ export const companyAccessSettings = pgTable(
       .notNull()
       .default(true),
     imageUploadEnabled: boolean("image_upload_enabled").notNull().default(true),
+    captureDeviceLocationEnabled: boolean("capture_device_location_enabled")
+      .notNull()
+      .default(false),
     reportsEnabled: boolean("reports_enabled").notNull().default(true),
     exportEnabled: boolean("export_enabled").notNull().default(true),
     userCreationLimit: integer("user_creation_limit").notNull().default(75),

@@ -1,10 +1,12 @@
 import { Router } from "express";
 
 import { parseMultipartPayload } from "@/middlewares/multipart-payload.middleware";
+import { requireAuth } from "@/middlewares/auth-placeholder.middleware";
 import { validate } from "@/middlewares/validate.middleware";
 import { singleImageUploadMiddleware } from "@/modules/uploads/uploads.middleware";
 import {
   getAiSettings,
+  getCurrentCompanyAccessSettings,
   getGeneralSettings,
   patchAiSettings,
   patchAiSettingsDefault,
@@ -22,6 +24,7 @@ import {
 const settingsRouter = Router();
 
 settingsRouter.get("/general", getGeneralSettings);
+settingsRouter.get("/company-access", requireAuth, getCurrentCompanyAccessSettings);
 settingsRouter.patch(
   "/general",
   singleImageUploadMiddleware,

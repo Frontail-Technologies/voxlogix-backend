@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 
 import { db } from "@/db";
@@ -72,7 +72,41 @@ function readSheetRows(workbook: XLSX.WorkBook, namePart: string): { sheetName: 
 }
 
 function summary(sheet: string): SheetImportSummary {
-  return { sheet, imported: 0, skipped: 0, errors: [] };
+  return { sheet, imported: 0, created: 0, updated: 0, unchanged: 0, skipped: 0, errors: [] };
+}
+
+function markCreated(result: SheetImportSummary) {
+  result.created += 1;
+  result.imported += 1;
+}
+
+function markUpdated(result: SheetImportSummary) {
+  result.updated += 1;
+  result.imported += 1;
+}
+
+function normalizedBusinessKey(valueText: string) {
+  return valueText.trim().toLowerCase();
+}
+
+function duplicateBusinessIds(rows: Row[], header: string, result: SheetImportSummary) {
+  const rowNumbersByKey = new Map<string, number[]>();
+
+  rows.forEach((row, index) => {
+    const raw = value(row, header);
+    if (!raw) return;
+    const key = normalizedBusinessKey(raw);
+    rowNumbersByKey.set(key, [...(rowNumbersByKey.get(key) ?? []), index + 5]);
+  });
+
+  const duplicates = new Set<string>();
+  for (const [key, rowNumbers] of rowNumbersByKey.entries()) {
+    if (rowNumbers.length <= 1) continue;
+    duplicates.add(key);
+    result.errors.push(`${header} "${key}" appears multiple times in rows ${rowNumbers.join(", ")}. Duplicate rows were skipped.`);
+  }
+
+  return duplicates;
 }
 
 function value(row: Row, key: string) {
@@ -172,14 +206,17 @@ async function importLocations(companyId: string, rows: Row[], result: SheetImpo
 
     if (existing) {
       await db.update(locations).set(payload).where(eq(locations.id, existing.id));
+      markUpdated(result);
     } else {
       await db.insert(locations).values(payload);
+      markCreated(result);
     }
-    result.imported += 1;
   }
 }
 
 async function importEquipment(companyId: string, rows: Row[], result: SheetImportSummary) {
+  const duplicateCodes = duplicateBusinessIds(rows, "EQUIPMENT ID", result);
+
   for (const row of rows) {
     const equipmentCode = value(row, "EQUIPMENT ID");
     const name = value(row, "EQUIPMENT NAME");
@@ -190,6 +227,11 @@ async function importEquipment(companyId: string, rows: Row[], result: SheetImpo
     if (!equipmentCode || !name || !section || !subLocation) {
       result.skipped += 1;
       result.errors.push(`Equipment row skipped: EQUIPMENT ID, EQUIPMENT NAME, SECTION, and SUB LOCATION are required. Row ID: ${equipmentCode || "blank"}`);
+      continue;
+    }
+
+    if (duplicateCodes.has(normalizedBusinessKey(equipmentCode))) {
+      result.skipped += 1;
       continue;
     }
 
@@ -205,6 +247,12 @@ async function importEquipment(companyId: string, rows: Row[], result: SheetImpo
       .select({ id: locations.id })
       .from(locations)
       .where(and(eq(locations.companyId, companyId), eq(locations.section, section), eq(locations.subLocation, subLocation)))
+      .limit(1);
+
+    const [existing] = await db
+      .select({ id: equipmentAssets.id })
+      .from(equipmentAssets)
+      .where(and(eq(equipmentAssets.companyId, companyId), eq(equipmentAssets.equipmentCode, equipmentCode)))
       .limit(1);
 
     await db
@@ -243,7 +291,11 @@ async function importEquipment(companyId: string, rows: Row[], result: SheetImpo
         },
       });
 
-    result.imported += 1;
+    if (existing) {
+      markUpdated(result);
+    } else {
+      markCreated(result);
+    }
   }
 }
 
@@ -266,8 +318,8 @@ async function importIssueCategories(companyId: string, rows: Row[], result: She
         and(
           eq(issueCategories.companyId, companyId),
           eq(issueCategories.name, name),
-          eq(issueCategories.equipmentFunction, equipmentFunction ?? ""),
-          eq(issueCategories.failureMode, failureMode ?? ""),
+          sql`coalesce(${issueCategories.equipmentFunction}, '') = ${equipmentFunction ?? ""}`,
+          sql`coalesce(${issueCategories.failureMode}, '') = ${failureMode ?? ""}`,
         ),
       )
       .limit(1);
@@ -291,10 +343,11 @@ async function importIssueCategories(companyId: string, rows: Row[], result: She
 
     if (existing) {
       await db.update(issueCategories).set(payload).where(eq(issueCategories.id, existing.id));
+      markUpdated(result);
     } else {
       await db.insert(issueCategories).values(payload);
+      markCreated(result);
     }
-    result.imported += 1;
   }
 }
 
@@ -309,43 +362,48 @@ async function importSafety(companyId: string, rows: Row[], result: SheetImportS
       continue;
     }
 
-    await db
-      .insert(safetyReportingMasters)
-      .values({
-        companyId,
-        safetyCategoryCode: optionalValue(row, "SAFETY CATEGORY ID"),
-        incidentCategory,
-        incidentType,
-        severityLevel: value(row, "SEVERITY LEVEL") || "MEDIUM",
-        requiresPpe: yesNo(value(row, "REQUIRES PPE")),
-        ppeType: optionalValue(row, "PPE TYPE"),
-        reportable: yesNo(value(row, "REPORTABLE (FACTORIES ACT)")),
-        immediateActionRequired: yesNo(value(row, "IMMEDIATE ACTION REQUIRED")),
-        notes: optionalValue(row, "NOTES"),
-        status: "ACTIVE",
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [safetyReportingMasters.companyId, safetyReportingMasters.safetyCategoryCode],
-        set: {
-          incidentCategory,
-          incidentType,
-          severityLevel: value(row, "SEVERITY LEVEL") || "MEDIUM",
-          requiresPpe: yesNo(value(row, "REQUIRES PPE")),
-          ppeType: optionalValue(row, "PPE TYPE"),
-          reportable: yesNo(value(row, "REPORTABLE (FACTORIES ACT)")),
-          immediateActionRequired: yesNo(value(row, "IMMEDIATE ACTION REQUIRED")),
-          notes: optionalValue(row, "NOTES"),
-          status: "ACTIVE",
-          updatedAt: new Date(),
-        },
-      });
-    result.imported += 1;
+    const severityLevel = value(row, "SEVERITY LEVEL") || "MEDIUM";
+    const [existing] = await db
+      .select({ id: safetyReportingMasters.id })
+      .from(safetyReportingMasters)
+      .where(
+        and(
+          eq(safetyReportingMasters.companyId, companyId),
+          eq(safetyReportingMasters.incidentCategory, incidentCategory),
+          eq(safetyReportingMasters.incidentType, incidentType),
+          eq(safetyReportingMasters.severityLevel, severityLevel),
+        ),
+      )
+      .limit(1);
+
+    const payload = {
+      companyId,
+      safetyCategoryCode: optionalValue(row, "SAFETY CATEGORY ID"),
+      incidentCategory,
+      incidentType,
+      severityLevel,
+      requiresPpe: yesNo(value(row, "REQUIRES PPE")),
+      ppeType: optionalValue(row, "PPE TYPE"),
+      reportable: yesNo(value(row, "REPORTABLE (FACTORIES ACT)")),
+      immediateActionRequired: yesNo(value(row, "IMMEDIATE ACTION REQUIRED")),
+      notes: optionalValue(row, "NOTES"),
+      status: "ACTIVE",
+      updatedAt: new Date(),
+    };
+
+    if (existing) {
+      await db.update(safetyReportingMasters).set(payload).where(eq(safetyReportingMasters.id, existing.id));
+      markUpdated(result);
+    } else {
+      await db.insert(safetyReportingMasters).values(payload);
+      markCreated(result);
+    }
   }
 }
 
 async function importMeasuringPoints(companyId: string, rows: Row[], result: SheetImportSummary) {
   const equipmentMap = await getEquipmentMap(companyId);
+  const duplicateCodes = duplicateBusinessIds(rows, "POINT ID", result);
 
   for (const row of rows) {
     const pointCode = value(row, "POINT ID");
@@ -359,9 +417,20 @@ async function importMeasuringPoints(companyId: string, rows: Row[], result: She
       continue;
     }
 
+    if (duplicateCodes.has(normalizedBusinessKey(pointCode))) {
+      result.skipped += 1;
+      continue;
+    }
+
     if (equipmentCode && !equipment) {
       result.errors.push(`Measuring point ${pointCode}: equipment ${equipmentCode} was not found; imported without equipment link.`);
     }
+
+    const [existing] = await db
+      .select({ id: measuringPoints.id })
+      .from(measuringPoints)
+      .where(and(eq(measuringPoints.companyId, companyId), eq(measuringPoints.pointCode, pointCode)))
+      .limit(1);
 
     await db
       .insert(measuringPoints)
@@ -402,12 +471,18 @@ async function importMeasuringPoints(companyId: string, rows: Row[], result: She
           updatedAt: new Date(),
         },
       });
-    result.imported += 1;
+
+    if (existing) {
+      markUpdated(result);
+    } else {
+      markCreated(result);
+    }
   }
 }
 
 async function importMeterCounters(companyId: string, rows: Row[], result: SheetImportSummary) {
   const equipmentMap = await getEquipmentMap(companyId);
+  const duplicateCodes = duplicateBusinessIds(rows, "COUNTER ID", result);
 
   for (const row of rows) {
     const counterCode = value(row, "COUNTER ID");
@@ -421,9 +496,20 @@ async function importMeterCounters(companyId: string, rows: Row[], result: Sheet
       continue;
     }
 
+    if (duplicateCodes.has(normalizedBusinessKey(counterCode))) {
+      result.skipped += 1;
+      continue;
+    }
+
     if (equipmentCode && !equipment) {
       result.errors.push(`Meter counter ${counterCode}: equipment ${equipmentCode} was not found; imported without equipment link.`);
     }
+
+    const [existing] = await db
+      .select({ id: meterCounters.id })
+      .from(meterCounters)
+      .where(and(eq(meterCounters.companyId, companyId), eq(meterCounters.counterCode, counterCode)))
+      .limit(1);
 
     await db
       .insert(meterCounters)
@@ -464,7 +550,12 @@ async function importMeterCounters(companyId: string, rows: Row[], result: Sheet
           updatedAt: new Date(),
         },
       });
-    result.imported += 1;
+
+    if (existing) {
+      markUpdated(result);
+    } else {
+      markCreated(result);
+    }
   }
 }
 
@@ -477,52 +568,81 @@ async function importKaizen(companyId: string, rows: Row[], result: SheetImportS
       continue;
     }
 
-    await db
-      .insert(kaizenCategories)
-      .values({
-        companyId,
-        kaizenCategoryCode: optionalValue(row, "KAIZEN CATEGORY ID") || category.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-        category,
-        department: optionalValue(row, "DEPARTMENT"),
-        kaizenStatus: optionalValue(row, "STATUS"),
-        immediateActionRequired: yesNo(value(row, "IMMEDIATE ACTION REQUIRED")),
-        notes: optionalValue(row, "NOTES"),
-        status: "ACTIVE",
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [kaizenCategories.companyId, kaizenCategories.kaizenCategoryCode],
-        set: {
-          category,
-          department: optionalValue(row, "DEPARTMENT"),
-          kaizenStatus: optionalValue(row, "STATUS"),
-          immediateActionRequired: yesNo(value(row, "IMMEDIATE ACTION REQUIRED")),
-          notes: optionalValue(row, "NOTES"),
-          status: "ACTIVE",
-          updatedAt: new Date(),
-        },
-      });
-    result.imported += 1;
+    const department = optionalValue(row, "DEPARTMENT");
+    const [existing] = await db
+      .select({ id: kaizenCategories.id })
+      .from(kaizenCategories)
+      .where(
+        and(
+          eq(kaizenCategories.companyId, companyId),
+          eq(kaizenCategories.category, category),
+          sql`coalesce(${kaizenCategories.department}, '') = ${department ?? ""}`,
+        ),
+      )
+      .limit(1);
+
+    const payload = {
+      companyId,
+      kaizenCategoryCode: optionalValue(row, "KAIZEN CATEGORY ID") || category.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      category,
+      department,
+      kaizenStatus: optionalValue(row, "STATUS"),
+      immediateActionRequired: yesNo(value(row, "IMMEDIATE ACTION REQUIRED")),
+      notes: optionalValue(row, "NOTES"),
+      status: "ACTIVE",
+      updatedAt: new Date(),
+    };
+
+    if (existing) {
+      await db.update(kaizenCategories).set(payload).where(eq(kaizenCategories.id, existing.id));
+      markUpdated(result);
+    } else {
+      await db.insert(kaizenCategories).values(payload);
+      markCreated(result);
+    }
   }
 }
 
 async function importUsers(companyId: string, rows: Row[], result: SheetImportSummary) {
   const passwordHash = await hashPassword(DEFAULT_TEMP_PASSWORD);
+  const duplicateEmployeeIds = duplicateBusinessIds(rows, "EMPLOYEE ID", result);
 
   for (const row of rows) {
     const fullName = value(row, "FULL NAME");
     const email = value(row, "EMAIL").toLowerCase();
     const employeeId = value(row, "EMPLOYEE ID");
 
-    if (!fullName || !email) {
+    if (!employeeId || !fullName || !email) {
       result.skipped += 1;
-      result.errors.push(`User row skipped: FULL NAME and EMAIL are required. Employee ID: ${employeeId || "blank"}`);
+      result.errors.push(`User row skipped: EMPLOYEE ID, FULL NAME, and EMAIL are required. Employee ID: ${employeeId || "blank"}`);
       continue;
     }
 
-    const [existing] = await db.select({ id: admins.id }).from(admins).where(eq(admins.email, email)).limit(1);
+    if (duplicateEmployeeIds.has(normalizedBusinessKey(employeeId))) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const [existingByEmployeeId] = await db
+      .select({ id: admins.id })
+      .from(admins)
+      .where(and(eq(admins.companyId, companyId), eq(admins.employeeId, employeeId)))
+      .limit(1);
+    const [existingByEmail] = await db
+      .select({ id: admins.id, employeeId: admins.employeeId })
+      .from(admins)
+      .where(eq(admins.email, email))
+      .limit(1);
+
+    if (existingByEmail && existingByEmail.id !== existingByEmployeeId?.id) {
+      result.skipped += 1;
+      result.errors.push(`User ${employeeId} skipped: email ${email} already belongs to another user.`);
+      continue;
+    }
+
     const payload = {
       companyId,
+      employeeId,
       fullName,
       initials: initialsFor(fullName),
       username: usernameFor(email, employeeId),
@@ -533,13 +653,13 @@ async function importUsers(companyId: string, rows: Row[], result: SheetImportSu
       updatedAt: new Date(),
     };
 
-    if (existing) {
-      await db.update(admins).set(payload).where(eq(admins.id, existing.id));
+    if (existingByEmployeeId) {
+      await db.update(admins).set(payload).where(eq(admins.id, existingByEmployeeId.id));
+      markUpdated(result);
     } else {
       await db.insert(admins).values({ ...payload, passwordHash, requirePasswordReset: true });
+      markCreated(result);
     }
-
-    result.imported += 1;
   }
 }
 

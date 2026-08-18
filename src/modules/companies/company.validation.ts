@@ -44,6 +44,7 @@ export const updateCompanyAccessBodySchema = z
     voiceLoggingEnabled: z.boolean().optional(),
     aiStructuredExtractionEnabled: z.boolean().optional(),
     imageUploadEnabled: z.boolean().optional(),
+    captureDeviceLocationEnabled: z.boolean().optional(),
     enabledModuleIds: z.array(z.string().uuid()).optional(),
     reportsEnabled: z.boolean().optional(),
     exportEnabled: z.boolean().optional(),

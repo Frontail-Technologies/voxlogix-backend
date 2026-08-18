@@ -12,6 +12,7 @@ import {
 import { uploadImageAsset } from "@/modules/uploads/uploads.service";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
+import { ensureCompanyAccessSettings } from "@/shared/services/platform-defaults.service";
 
 function getParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value ?? "";
@@ -75,6 +76,17 @@ export const removeAiSettings = asyncHandler(
 export const getGeneralSettings = asyncHandler(
   async (_request: Request, response: Response) => {
     const result = await getGeneralSettingsDetail();
+
+    return sendSuccess(response, {
+      data: result,
+    });
+  },
+);
+
+export const getCurrentCompanyAccessSettings = asyncHandler(
+  async (request: Request, response: Response) => {
+    const companyId = request.user?.companyId;
+    const result = companyId ? await ensureCompanyAccessSettings(companyId) : null;
 
     return sendSuccess(response, {
       data: result,

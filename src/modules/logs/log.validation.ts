@@ -9,6 +9,7 @@ export const listLogsQuerySchema = paginationQuerySchema.extend({
   moduleType: z.string().trim().optional(),
   equipmentId: z.string().uuid().optional(),
   createdById: z.string().uuid().optional(),
+  scope: z.enum(["feed", "mine"]).optional(),
   dateFrom: z.coerce.date().optional(),
   dateTo: z.coerce.date().optional(),
 });

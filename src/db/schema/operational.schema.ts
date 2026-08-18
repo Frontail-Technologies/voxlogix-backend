@@ -94,7 +94,7 @@ export const safetyReportingMasters = pgTable(
   (table) => ({
     companyIndex: index("safety_reporting_masters_company_id_idx").on(table.companyId),
     categoryIndex: index("safety_reporting_masters_incident_category_idx").on(table.incidentCategory),
-    codeUniqueIndex: uniqueIndex("safety_reporting_masters_company_code_uidx").on(
+    codeIndex: index("safety_reporting_masters_company_code_idx").on(
       table.companyId,
       table.safetyCategoryCode,
     ),
@@ -183,7 +183,7 @@ export const kaizenCategories = pgTable(
   (table) => ({
     companyIndex: index("kaizen_categories_company_id_idx").on(table.companyId),
     categoryIndex: index("kaizen_categories_category_idx").on(table.category),
-    codeUniqueIndex: uniqueIndex("kaizen_categories_company_code_uidx").on(table.companyId, table.kaizenCategoryCode),
+    codeIndex: index("kaizen_categories_company_code_idx").on(table.companyId, table.kaizenCategoryCode),
   }),
 );
 

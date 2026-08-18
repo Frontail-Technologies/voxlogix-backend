@@ -23,6 +23,7 @@ export const admins = pgTable(
     initials: varchar("initials", { length: 8 }).notNull(),
     avatarUrl: text("avatar_url"),
     avatarKey: text("avatar_key"),
+    employeeId: varchar("employee_id", { length: 80 }),
     username: varchar("username", { length: 80 }).notNull().unique(),
     email: varchar("email", { length: 255 }).notNull().unique(),
     phone: varchar("phone", { length: 32 }).notNull(),
@@ -45,6 +46,10 @@ export const admins = pgTable(
   },
   (table) => ({
     companyIndex: index("admins_company_id_idx").on(table.companyId),
+    companyEmployeeIndex: index("admins_company_employee_id_idx").on(
+      table.companyId,
+      table.employeeId,
+    ),
     statusIndex: index("admins_status_idx").on(table.status),
     nameIndex: index("admins_full_name_idx").on(table.fullName),
   }),
@@ -112,4 +117,3 @@ export const adminLoginHistoryRelations = relations(
     }),
   }),
 );
-

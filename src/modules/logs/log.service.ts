@@ -43,10 +43,53 @@ function buildLogsFilter(input: Omit<ListLogsInput, "page" | "limit">) {
   if (input.moduleType) filters.push(eq(operationalLogs.moduleType, input.moduleType));
   if (input.equipmentId) filters.push(eq(operationalLogs.equipmentId, input.equipmentId));
   if (input.createdById) filters.push(eq(operationalLogs.createdById, input.createdById));
+  if (input.scope === "feed") {
+    const alertCondition = sql<boolean>`(
+      lower(${operationalLogs.severity}) in ('critical', 'high')
+      or lower(${operationalLogs.status}) in ('alert', 'abnormal', 'out_of_limit', 'out of limit', 'high_deviation', 'high deviation')
+      or lower(coalesce(${operationalLogs.extractedFields}->>'isOutOfLimit', '')) in ('true', 'yes', 'out_of_limit', 'out of limit')
+      or lower(coalesce(${operationalLogs.extractedFields}->>'deviationFlag', '')) in ('true', 'yes', 'alert', 'abnormal', 'out_of_limit', 'out of limit', 'high_deviation', 'high deviation')
+    )`;
+
+    filters.push(
+      sql<boolean>`(
+        ${modules.feedEnabled} = true
+        or (${modules.feedOnlyOnAlert} = true and ${alertCondition})
+      )`,
+    );
+  }
   if (input.dateFrom) filters.push(gte(operationalLogs.createdAt, input.dateFrom));
   if (input.dateTo) filters.push(lte(operationalLogs.createdAt, input.dateTo));
 
   return and(...filters);
+}
+
+function normalizeModuleLabel(value?: string | null) {
+  return value?.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() ?? "";
+}
+
+async function getModuleForLog(input: Pick<CreateLogInput, "companyId" | "moduleId" | "moduleType">) {
+  if (input.moduleId) {
+    const [module] = await db
+      .select({ id: modules.id, name: modules.name, type: moduleTypes.name })
+      .from(modules)
+      .leftJoin(moduleTypes, eq(modules.moduleTypeId, moduleTypes.id))
+      .where(eq(modules.id, input.moduleId))
+      .limit(1);
+
+    if (module) return module;
+  }
+
+  return {
+    id: input.moduleId ?? null,
+    name: input.moduleType,
+    type: input.moduleType,
+  };
+}
+
+function requiresEquipment(moduleNameOrType?: string | null) {
+  const normalized = normalizeModuleLabel(moduleNameOrType);
+  return normalized.includes("equipment") && !normalized.includes("measurement") && !normalized.includes("meter");
 }
 
 function makeLogNumber() {
@@ -71,6 +114,7 @@ export async function listLogs(input: ListLogsInput) {
     .select({ totalItems: count() })
     .from(operationalLogs)
     .leftJoin(equipmentAssets, eq(operationalLogs.equipmentId, equipmentAssets.id))
+    .leftJoin(modules, eq(operationalLogs.moduleId, modules.id))
     .where(where);
   const pagination = buildPagination({ page: input.page, limit: input.limit, totalItems });
 
@@ -111,6 +155,7 @@ export async function listLogs(input: ListLogsInput) {
     .from(operationalLogs)
     .leftJoin(equipmentAssets, eq(operationalLogs.equipmentId, equipmentAssets.id))
     .leftJoin(admins, eq(operationalLogs.createdById, admins.id))
+    .leftJoin(modules, eq(operationalLogs.moduleId, modules.id))
     .where(where)
     .orderBy(desc(operationalLogs.createdAt))
     .limit(pagination.limit)
@@ -180,6 +225,17 @@ export async function getLog(companyId: string, logId: string) {
 }
 
 export async function createLog(input: CreateLogInput) {
+  const module = await getModuleForLog(input);
+  const moduleLabel = module.name || module.type || input.moduleType;
+
+  if (requiresEquipment(moduleLabel) && !input.equipmentId) {
+    throw new AppError({
+      message: "Equipment is required for Equipment Log.",
+      statusCode: HTTP_STATUS.BAD_REQUEST,
+      errorCode: ERROR_CODES.VALIDATION_ERROR,
+    });
+  }
+
   if (input.clientRequestId) {
     const [existing] = await db
       .select({ id: operationalLogs.id })

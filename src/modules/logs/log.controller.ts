@@ -12,6 +12,7 @@ import {
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
+import { USER_ROLES } from "@/shared/constants";
 
 function companyIdOf(request: Request) {
   return String(request.user?.companyId ?? "");
@@ -27,6 +28,15 @@ function userNameOf(request: Request) {
 }
 
 export const getLogs = asyncHandler(async (request: Request, response: Response) => {
+  const scope = typeof request.query.scope === "string" ? request.query.scope : undefined;
+  const requestedCreatedById = typeof request.query.createdById === "string" ? request.query.createdById : undefined;
+  const createdById =
+    scope === "feed"
+      ? undefined
+      : scope === "mine" || request.user?.role === USER_ROLES.EXECUTION
+      ? request.user?.id
+      : requestedCreatedById;
+
   const result = await listLogs({
     companyId: companyIdOf(request),
     page: Number(request.query.page ?? 1),
@@ -36,7 +46,8 @@ export const getLogs = asyncHandler(async (request: Request, response: Response)
     severity: typeof request.query.severity === "string" ? request.query.severity : undefined,
     moduleType: typeof request.query.moduleType === "string" ? request.query.moduleType : undefined,
     equipmentId: typeof request.query.equipmentId === "string" ? request.query.equipmentId : undefined,
-    createdById: typeof request.query.createdById === "string" ? request.query.createdById : undefined,
+    createdById,
+    scope: scope === "feed" || scope === "mine" ? scope : undefined,
     dateFrom: request.query.dateFrom ? new Date(String(request.query.dateFrom)) : undefined,
     dateTo: request.query.dateTo ? new Date(String(request.query.dateTo)) : undefined,
   });
@@ -50,10 +61,10 @@ export const getLogDetail = asyncHandler(async (request: Request, response: Resp
 
 export const postLog = asyncHandler(async (request: Request, response: Response) => {
   const log = await createLog({
+    ...request.body,
     companyId: companyIdOf(request),
     createdById: request.user?.id,
     createdByName: userNameOf(request),
-    ...request.body,
   });
   return sendSuccess(response, { statusCode: HTTP_STATUS.CREATED, data: log });
 });
@@ -84,4 +95,3 @@ export const removeLogAttachment = asyncHandler(async (request: Request, respons
     data: await deleteLogAttachment(companyIdOf(request), paramOf(request, "logId"), paramOf(request, "attachmentId")),
   });
 });
-
