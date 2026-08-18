@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { PDFParse } from "pdf-parse";
 
 import { db } from "@/db";
@@ -222,8 +222,7 @@ export async function getEquipmentManual(companyId: string, manualId: string) {
     manual.status = "FAILED";
     manual.updatedAt = new Date();
   }
-  const chunks = await db.select({ id: equipmentManualChunks.id, pageNumber: equipmentManualChunks.pageNumber, sectionTitle: equipmentManualChunks.sectionTitle, chunkText: equipmentManualChunks.chunkText, sortOrder: equipmentManualChunks.sortOrder }).from(equipmentManualChunks).where(eq(equipmentManualChunks.manualId, manual.id)).orderBy(asc(equipmentManualChunks.sortOrder));
-  return { ...manual, chunks };
+  return manual;
 }
 
 export async function createEquipmentManual(input: CreateEquipmentManualInput, asset?: UploadAssetResult | null, sourceFile?: ManualSourceFile) {
