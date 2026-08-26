@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import {
   addLogAttachment,
   createLog,
+  deleteLog,
   deleteLogAttachment,
   getLog,
   listLogs,
@@ -93,5 +94,14 @@ export const postLogAttachment = asyncHandler(async (request: Request, response:
 export const removeLogAttachment = asyncHandler(async (request: Request, response: Response) => {
   return sendSuccess(response, {
     data: await deleteLogAttachment(companyIdOf(request), paramOf(request, "logId"), paramOf(request, "attachmentId")),
+  });
+});
+
+export const removeLog = asyncHandler(async (request: Request, response: Response) => {
+  return sendSuccess(response, {
+    data: await deleteLog(companyIdOf(request), paramOf(request, "logId"), {
+      id: String(request.user?.id ?? ""),
+      role: String(request.user?.role ?? ""),
+    }),
   });
 });

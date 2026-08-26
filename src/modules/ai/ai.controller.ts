@@ -2,10 +2,12 @@ import type { Request, Response } from "express";
 
 import {
   chatWithEquipmentAssistant,
+  deleteChatSession,
   extractLogFields,
   getChatSession,
   listChatSessions,
   matchEquipmentFromTranscript,
+  updateChatSessionTitle,
 } from "@/modules/ai/ai.service";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
@@ -50,5 +52,20 @@ export const getChatSessionDetail = asyncHandler(async (request: Request, respon
 
 export const postMatchEquipment = asyncHandler(async (request: Request, response: Response) => {
   const result = await matchEquipmentFromTranscript({ companyId: companyIdOf(request), ...request.body });
+  return sendSuccess(response, { data: result });
+});
+
+export const patchChatSession = asyncHandler(async (request: Request, response: Response) => {
+  const session = await updateChatSessionTitle(
+    companyIdOf(request),
+    userIdOf(request),
+    paramOf(request, "sessionId"),
+    request.body.title,
+  );
+  return sendSuccess(response, { data: session });
+});
+
+export const removeChatSession = asyncHandler(async (request: Request, response: Response) => {
+  const result = await deleteChatSession(companyIdOf(request), userIdOf(request), paramOf(request, "sessionId"));
   return sendSuccess(response, { data: result });
 });

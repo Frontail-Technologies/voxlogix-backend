@@ -25,6 +25,10 @@ export const chatSessionIdParamsSchema = z.object({
   sessionId: z.string().uuid(),
 });
 
+export const updateChatSessionBodySchema = z.object({
+  title: z.string().trim().min(1).max(220),
+});
+
 export const matchEquipmentBodySchema = z.object({
   transcript: z.string().trim().min(3).max(10000),
 });

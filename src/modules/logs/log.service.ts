@@ -17,7 +17,9 @@ import type {
   UpdateLogInput,
   UpdateLogStatusInput,
 } from "@/modules/logs/log.types";
+import { deleteImageAsset } from "@/modules/uploads/uploads.service";
 import { AppError } from "@/shared/errors/app-error";
+import { USER_ROLES } from "@/shared/constants";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { buildPagination } from "@/shared/helpers/pagination";
@@ -153,6 +155,16 @@ export async function listLogs(input: ListLogsInput) {
           AND ${logAttachments.mimeType} LIKE 'image/%'
         ORDER BY ${logAttachments.sortOrder} ASC
         LIMIT 1
+      )`,
+      
+      thumbnailUrls: sql<string[]>`(
+        SELECT COALESCE(json_agg(sub.url), '[]'::json) FROM (
+          SELECT ${logAttachments.url} AS url FROM ${logAttachments}
+          WHERE ${logAttachments.logId} = ${operationalLogs.id}
+            AND ${logAttachments.mimeType} LIKE 'image/%'
+          ORDER BY ${logAttachments.sortOrder} ASC
+          LIMIT 5
+        ) sub
       )`,
       equipment: {
         id: equipmentAssets.id,
@@ -379,4 +391,56 @@ export async function deleteLogAttachment(companyId: string, logId: string, atta
   await ensureLog(companyId, logId);
   await db.delete(logAttachments).where(and(eq(logAttachments.id, attachmentId), eq(logAttachments.logId, logId)));
   return { id: attachmentId, logId };
+}
+
+const LOG_DELETE_PRIVILEGED_ROLES: string[] = [USER_ROLES.ADMIN, USER_ROLES.MASTER];
+
+export async function deleteLog(companyId: string, logId: string, actor: { id: string; role: string }) {
+  const [existing] = await db
+    .select({ id: operationalLogs.id, createdById: operationalLogs.createdById })
+    .from(operationalLogs)
+    .where(and(eq(operationalLogs.id, logId), eq(operationalLogs.companyId, companyId)))
+    .limit(1);
+
+  if (!existing) {
+    throw new AppError({ message: "Log not found.", statusCode: HTTP_STATUS.NOT_FOUND, errorCode: ERROR_CODES.NOT_FOUND });
+  }
+
+  const isOwner = existing.createdById === actor.id;
+  if (!isOwner && !LOG_DELETE_PRIVILEGED_ROLES.includes(actor.role)) {
+    throw new AppError({
+      message: "You do not have permission to delete this log.",
+      statusCode: HTTP_STATUS.FORBIDDEN,
+      errorCode: ERROR_CODES.FORBIDDEN,
+    });
+  }
+
+  // Retain the storage keys before deleting anything — needed for cleanup after the DB
+  // delete below, since the attachment rows themselves cascade-delete with the log.
+  const attachments = await db
+    .select({ key: logAttachments.key })
+    .from(logAttachments)
+    .where(eq(logAttachments.logId, logId));
+
+  // The DB delete is authoritative and must happen first: logAttachments and
+  // logTimelineEvents cascade-delete via FK; measuringPointReadings and
+  // meterCounterReadings that reference this log have their operationalLogId set null
+  // instead of being deleted, since those readings belong to the measuring point / meter,
+  // not the log.
+  await db.delete(operationalLogs).where(and(eq(operationalLogs.id, logId), eq(operationalLogs.companyId, companyId)));
+
+  // Physical storage cleanup only runs once the DB delete has committed, and is best-effort:
+  // if it fails, the log stays deleted (data consistency over avoiding an orphaned file) and
+  // the failure is only logged, never surfaced to the caller or rolled back.
+  await Promise.all(
+    attachments
+      .filter((attachment): attachment is { key: string } => Boolean(attachment.key))
+      .map((attachment) =>
+        deleteImageAsset({ key: attachment.key }).catch((error) => {
+          console.error(`[log.service] failed to delete storage asset for log ${logId}`, error);
+        }),
+      ),
+  );
+
+  return { id: logId };
 }

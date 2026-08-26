@@ -5,13 +5,22 @@ import { requireRole } from "@/middlewares/role-placeholder.middleware";
 import { validate } from "@/middlewares/validate.middleware";
 import { USER_ROLES } from "@/shared/constants";
 
-import { getChatSessionDetail, getChatSessions, postChat, postExtractLogFields, postMatchEquipment } from "./ai.controller";
+import {
+  getChatSessionDetail,
+  getChatSessions,
+  patchChatSession,
+  postChat,
+  postExtractLogFields,
+  postMatchEquipment,
+  removeChatSession,
+} from "./ai.controller";
 import {
   chatBodySchema,
   chatSessionIdParamsSchema,
   extractLogFieldsBodySchema,
   listChatSessionsQuerySchema,
   matchEquipmentBodySchema,
+  updateChatSessionBodySchema,
 } from "./ai.validation";
 
 const aiRouter = Router();
@@ -23,5 +32,11 @@ aiRouter.post("/match-equipment", validate({ body: matchEquipmentBodySchema }), 
 aiRouter.post("/chat", validate({ body: chatBodySchema }), postChat);
 aiRouter.get("/chat/sessions", validate({ query: listChatSessionsQuerySchema }), getChatSessions);
 aiRouter.get("/chat/sessions/:sessionId", validate({ params: chatSessionIdParamsSchema }), getChatSessionDetail);
+aiRouter.patch(
+  "/chat/sessions/:sessionId",
+  validate({ params: chatSessionIdParamsSchema, body: updateChatSessionBodySchema }),
+  patchChatSession,
+);
+aiRouter.delete("/chat/sessions/:sessionId", validate({ params: chatSessionIdParamsSchema }), removeChatSession);
 
 export { aiRouter };

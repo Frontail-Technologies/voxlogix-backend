@@ -679,6 +679,29 @@ export async function chatWithEquipmentAssistant(input: ChatInput) {
   });
 }
 
+export async function updateChatSessionTitle(companyId: string, userId: string, sessionId: string, title: string) {
+  await ensureChatSession(companyId, userId, sessionId);
+  const [updated] = await db
+    .update(aiChatSessions)
+    .set({ title, updatedAt: new Date() })
+    .where(eq(aiChatSessions.id, sessionId))
+    .returning({
+      id: aiChatSessions.id,
+      title: aiChatSessions.title,
+      equipmentId: aiChatSessions.equipmentId,
+      updatedAt: aiChatSessions.updatedAt,
+    });
+
+  return updated;
+}
+
+export async function deleteChatSession(companyId: string, userId: string, sessionId: string) {
+  await ensureChatSession(companyId, userId, sessionId);
+  // aiChatMessages cascade-deletes via its sessionId FK — no manual message cleanup needed.
+  await db.delete(aiChatSessions).where(eq(aiChatSessions.id, sessionId));
+  return { id: sessionId };
+}
+
 export async function matchEquipmentFromTranscript(input: MatchEquipmentInput) {
   const { single } = await resolveEquipmentMention(input.companyId, input.transcript);
   return { equipment: single };

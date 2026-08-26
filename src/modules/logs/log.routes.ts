@@ -12,6 +12,7 @@ import {
   patchLogStatus,
   postLog,
   postLogAttachment,
+  removeLog,
   removeLogAttachment,
 } from "./log.controller";
 import {
@@ -35,5 +36,6 @@ logsRouter.patch("/:logId", validate({ params: logIdParamsSchema, body: updateLo
 logsRouter.patch("/:logId/status", validate({ params: logIdParamsSchema, body: updateLogStatusBodySchema }), patchLogStatus);
 logsRouter.post("/:logId/attachments", validate({ params: logIdParamsSchema, body: logAttachmentBodySchema }), postLogAttachment);
 logsRouter.delete("/:logId/attachments/:attachmentId", validate({ params: logAttachmentIdParamsSchema }), removeLogAttachment);
+logsRouter.delete("/:logId", validate({ params: logIdParamsSchema }), removeLog);
 
 export { logsRouter };
