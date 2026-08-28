@@ -36,6 +36,28 @@ const percentageColumns = new Set([
   "Deviation % (vs Expected)",
 ]);
 
+// Belt-and-suspenders formula-injection guard: exceljs writes plain strings
+// as literal text today (not a formula cell), so this isn't currently
+// exploitable, but a cell value beginning with =, +, -, or @ would be
+// interpreted as a live formula by Excel/LibreOffice if that ever changes —
+// prefix with a leading apostrophe (Excel's own "treat as text" convention)
+// so it stays inert regardless.
+const FORMULA_TRIGGER_CHARS = new Set(["=", "+", "-", "@"]);
+function neutralizeFormula<T extends string | number | Date | null>(value: T): T | string {
+  if (typeof value !== "string" || value.length === 0) return value;
+  return FORMULA_TRIGGER_CHARS.has(value[0]) ? `'${value}` : value;
+}
+function sanitizeRow<T extends Record<string, string | number | Date | null>>(row: T): T {
+  const sanitized = { ...row };
+  for (const key of Object.keys(sanitized)) {
+    sanitized[key as keyof T] = neutralizeFormula(sanitized[key]) as T[keyof T];
+  }
+  return sanitized;
+}
+function sanitizeArrayRow(row: Array<string | number | null>): Array<string | number | null> {
+  return row.map((value) => neutralizeFormula(value));
+}
+
 export async function buildOutputReportWorkbook(dataset: OutputReportDataset) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "VoxLogiX";
@@ -69,7 +91,7 @@ function addReadMeSheet(workbook: ExcelJS.Workbook, dataset: OutputReportDataset
   sheet.columns = [{ width: 32 }, { width: 80 }];
   const rows = [
     ["VoxLogiX - Maintenance & Reliability Output Report", ""],
-    ["Company", dataset.company.name],
+    ["Company", neutralizeFormula(dataset.company.name)],
     ["From Date", dataset.range.fromDate],
     ["To Date", dataset.range.toDate],
     ["Generated At", dataset.generatedAt],
@@ -114,7 +136,7 @@ function addKpiDashboardSheet(workbook: ExcelJS.Workbook, kpi: KpiDashboardDto) 
   sheet.getCell("A1").value = "VoxLogiX KPI Dashboard";
   sheet.getCell("A1").font = { bold: true, size: 16, color: { argb: "FF0F172A" } };
   sheet.getCell("A1").alignment = { horizontal: "center" };
-  sheet.addRow(["Company", kpi.company.name, "From", kpi.period.fromDate, "To", kpi.period.toDate]);
+  sheet.addRow(["Company", neutralizeFormula(kpi.company.name), "From", kpi.period.fromDate, "To", kpi.period.toDate]);
   sheet.addRow(["Generated At", new Date(kpi.generatedAt)]);
   sheet.getCell("B3").numFmt = "dd-mm-yyyy hh:mm";
   sheet.addRow([]);
@@ -175,7 +197,7 @@ function addSection(
   if (rows.length === 0) {
     sheet.addRow(["No data"]);
   } else {
-    for (const row of rows) sheet.addRow(row);
+    for (const row of rows) sheet.addRow(sanitizeArrayRow(row));
   }
 
   const percentColumns = new Set(options.percentColumns ?? []);
@@ -207,7 +229,7 @@ function addDataSheet(
   }));
 
   for (const row of rows) {
-    sheet.addRow(row);
+    sheet.addRow(sanitizeRow(row));
   }
 
   const header = sheet.getRow(1);

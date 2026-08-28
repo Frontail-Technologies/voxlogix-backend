@@ -46,6 +46,7 @@ export type DeleteAssetResult = {
 export type CreateSignedUploadInput = {
   fileName: string;
   contentType: string;
+  contentLength: number;
   folder?: string;
   context?: StorageAssetContext;
 };
@@ -58,4 +59,15 @@ export type CreateSignedUploadResult = {
   expiresInSeconds: number;
   method: "PUT";
   headers: Record<string, string>;
+};
+
+export type SignedDownloadInput = {
+  key: string;
+  resourceType?: "image" | "video" | "raw";
+};
+
+export type SignedDownloadResult = {
+  provider: StorageProviderName;
+  url: string;
+  expiresInSeconds: number;
 };

@@ -5,6 +5,8 @@ import type { StorageProvider } from "@/lib/storage/storage.interface";
 import type {
   DeleteAssetInput,
   DeleteAssetResult,
+  SignedDownloadInput,
+  SignedDownloadResult,
   UploadAssetInput,
   UploadAssetResult,
 } from "@/lib/storage/storage.types";
@@ -116,6 +118,29 @@ export class CloudinaryStorageProvider implements StorageProvider {
       key: input.key,
       deleted: result.result === "ok" || result.result === "not found",
     };
+  }
+
+  async createSignedDownloadUrl(input: SignedDownloadInput): Promise<SignedDownloadResult> {
+    const expiresInSeconds = 600; // 10 minutes
+    // IMPORTANT CAVEAT (see StorageProvider interface doc): this produces a
+    // validly-signed, time-scoped URL, but Cloudinary only actually enforces
+    // the signature/expiry for assets whose delivery `type` is "authenticated"
+    // or "private". Every asset uploaded by this app today (and this pass
+    // does not change that) uses the default `type: "upload"`, which stays
+    // reachable via its own plain unsigned URL regardless of this signature.
+    // Real enforcement requires switching uploads to `type: "authenticated"`
+    // — a change deliberately not made in this pass because it would break
+    // every current image/audio/manual render across web and mobile unless
+    // every consuming UI component is updated in the same rollout. See report.
+    const url = cloudinary.url(input.key, {
+      resource_type: input.resourceType ?? "image",
+      type: "upload",
+      secure: true,
+      sign_url: true,
+      expires_at: Math.floor(Date.now() / 1000) + expiresInSeconds,
+    });
+
+    return { provider: "cloudinary", url, expiresInSeconds };
   }
 }
 

@@ -6,6 +6,7 @@ import helmet from "helmet";
 import { appConfig } from "@/config/app.config";
 import { corsOptions } from "@/config/cors";
 import { authPlaceholderMiddleware } from "@/middlewares/auth-placeholder.middleware";
+import { csrfOriginCheckMiddleware } from "@/middlewares/csrf-origin-check.middleware";
 import { errorMiddleware } from "@/middlewares/error.middleware";
 import { notFoundMiddleware } from "@/middlewares/not-found.middleware";
 import { rateLimitMiddleware } from "@/middlewares/rate-limit.middleware";
@@ -22,6 +23,7 @@ app.use(express.json({ limit: appConfig.bodySizeLimit }));
 app.use(express.urlencoded({ extended: true, limit: appConfig.bodySizeLimit }));
 app.use(requestLoggerMiddleware);
 app.use(rateLimitMiddleware);
+app.use(csrfOriginCheckMiddleware);
 app.use(authPlaceholderMiddleware);
 
 app.use(appConfig.apiBasePath, moduleRouter);

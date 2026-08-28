@@ -17,7 +17,7 @@ import type {
   UpdateLogInput,
   UpdateLogStatusInput,
 } from "@/modules/logs/log.types";
-import { deleteImageAsset } from "@/modules/uploads/uploads.service";
+import { deleteStorageAssetByKey } from "@/modules/uploads/uploads.service";
 import { AppError } from "@/shared/errors/app-error";
 import { USER_ROLES } from "@/shared/constants";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
@@ -436,7 +436,7 @@ export async function deleteLog(companyId: string, logId: string, actor: { id: s
     attachments
       .filter((attachment): attachment is { key: string } => Boolean(attachment.key))
       .map((attachment) =>
-        deleteImageAsset({ key: attachment.key }).catch((error) => {
+        deleteStorageAssetByKey(attachment.key).catch((error) => {
           console.error(`[log.service] failed to delete storage asset for log ${logId}`, error);
         }),
       ),

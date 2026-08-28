@@ -28,14 +28,20 @@ export function authPlaceholderMiddleware(
 
   const payload = verifyAccessToken(token);
 
-  if (payload && typeof payload === "object") {
+  // Fail closed: a verified-but-incomplete token (missing subject or role)
+  // must not authenticate as anyone, and must never default to the
+  // highest-privilege role. Every real token minted by signAccessToken
+  // always carries both claims (auth.service.ts); this only guards against
+  // a malformed/future token shape silently granting access.
+  const subject = typeof payload?.sub === "string" ? payload.sub : typeof payload?.userId === "string" ? payload.userId : undefined;
+  const role = typeof payload?.role === "string" ? payload.role : undefined;
+
+  if (payload && typeof payload === "object" && subject && role) {
     request.user = {
-      id: String(payload.sub ?? payload.userId ?? "placeholder-user"),
-      role: String(payload.role ?? "MASTER"),
-      email:
-        typeof payload.email === "string" ? payload.email : undefined,
-      companyId:
-        typeof payload.companyId === "string" ? payload.companyId : undefined,
+      id: subject,
+      role,
+      email: typeof payload.email === "string" ? payload.email : undefined,
+      companyId: typeof payload.companyId === "string" ? payload.companyId : undefined,
     };
   }
 

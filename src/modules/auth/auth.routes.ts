@@ -1,6 +1,7 @@
 import { Router } from "express";
 
 import { requireAuth } from "@/middlewares/auth-placeholder.middleware";
+import { authRateLimitMiddleware } from "@/middlewares/rate-limit.middleware";
 import { validate } from "@/middlewares/validate.middleware";
 
 import {
@@ -23,8 +24,10 @@ import {
 
 const authRouter = Router();
 
-authRouter.post("/login", validate({ body: loginBodySchema }), postLogin);
-authRouter.post("/refresh", postRefresh);
+// Credential-guessing surface (login, refresh, OTP verify/reset) gets a
+// dedicated tighter rate limit; see security audit.
+authRouter.post("/login", authRateLimitMiddleware, validate({ body: loginBodySchema }), postLogin);
+authRouter.post("/refresh", authRateLimitMiddleware, postRefresh);
 authRouter.get("/me", requireAuth, getMe);
 authRouter.post("/logout", postLogout);
 authRouter.post(
@@ -35,16 +38,19 @@ authRouter.post(
 );
 authRouter.post(
   "/forgot-password",
+  authRateLimitMiddleware,
   validate({ body: forgotPasswordBodySchema }),
   postForgotPassword,
 );
 authRouter.post(
   "/verify-otp",
+  authRateLimitMiddleware,
   validate({ body: verifyResetOtpBodySchema }),
   postVerifyResetOtp,
 );
 authRouter.post(
   "/reset-password",
+  authRateLimitMiddleware,
   validate({ body: resetPasswordBodySchema }),
   postResetPassword,
 );

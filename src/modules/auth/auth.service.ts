@@ -1,8 +1,8 @@
-import { desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import { db } from "@/db";
-import { adminLoginHistory, admins, companies, passwordResetOtps } from "@/db/schema";
+import { adminLoginHistory, admins, authSessions, companies, passwordResetOtps } from "@/db/schema";
 import type {
   ChangePasswordInput,
   ForgotPasswordInput,
@@ -67,7 +67,19 @@ function invalidCredentialsError() {
   });
 }
 
-function createSession(admin: SessionAdminRow) {
+// Parses the simple "<number><unit>" duration strings this project's JWT_*_EXPIRES_IN
+// env vars already use (e.g. "15m", "7d") — kept local/minimal rather than pulling in
+// a duration-parsing dependency for one call site. Falls back to 7 days on an
+// unrecognized format so a session row is never created with a bogus/immediate expiry.
+function parseDurationMs(duration: string): number {
+  const match = /^(\d+)\s*(s|m|h|d)$/.exec(duration.trim());
+  if (!match) return 7 * 24 * 60 * 60 * 1000;
+  const value = Number(match[1]);
+  const unitMs = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2] as "s" | "m" | "h" | "d"];
+  return value * unitMs;
+}
+
+async function createSession(admin: SessionAdminRow, meta?: { userAgent?: string }) {
   const tokenPayload = {
     sub: admin.id,
     role: admin.role,
@@ -75,14 +87,31 @@ function createSession(admin: SessionAdminRow) {
     companyId: admin.companyId,
   };
 
+  const [session] = await db
+    .insert(authSessions)
+    .values({
+      adminId: admin.id,
+      companyId: admin.companyId,
+      expiresAt: new Date(Date.now() + parseDurationMs(env.JWT_REFRESH_EXPIRES_IN)),
+      userAgent: meta?.userAgent,
+    })
+    .returning({ id: authSessions.id });
+
   return {
     accessToken: signAccessToken(tokenPayload),
-    refreshToken: signRefreshToken(tokenPayload),
+    refreshToken: signRefreshToken({ ...tokenPayload, jti: session.id }),
     user: mapAdminToSessionUser(admin),
   };
 }
 
-export async function login(input: LoginInput) {
+/** Marks one session row revoked (idempotent). Used both by refresh-token
+ * rotation (revoke the just-consumed session before minting its successor)
+ * and by logout. */
+async function revokeSession(sessionId: string) {
+  await db.update(authSessions).set({ revokedAt: new Date() }).where(and(eq(authSessions.id, sessionId), isNull(authSessions.revokedAt)));
+}
+
+export async function login(input: LoginInput, meta?: { userAgent?: string }) {
   const identifier = input.identifier.trim().toLowerCase();
 
   const [admin] = await db
@@ -99,6 +128,7 @@ export async function login(input: LoginInput) {
       requirePasswordReset: admins.requirePasswordReset,
       companyId: companies.id,
       companyName: companies.name,
+      companyStatus: companies.status,
     })
     .from(admins)
     .innerJoin(companies, eq(admins.companyId, companies.id))
@@ -123,6 +153,14 @@ export async function login(input: LoginInput) {
     });
   }
 
+  if (admin.companyStatus !== "ACTIVE" && admin.companyStatus !== "DEMO") {
+    throw new AppError({
+      message: "This company's account is not active. Contact support.",
+      statusCode: HTTP_STATUS.FORBIDDEN,
+      errorCode: ERROR_CODES.FORBIDDEN,
+    });
+  }
+
   const now = new Date();
 
   await db
@@ -135,10 +173,10 @@ export async function login(input: LoginInput) {
     loggedInAt: now,
   });
 
-  return createSession(admin);
+  return createSession(admin, meta);
 }
 
-export async function refreshSession(refreshToken?: string) {
+export async function refreshSession(refreshToken?: string, meta?: { userAgent?: string }) {
   if (!refreshToken) {
     throw unauthorizedSessionError();
   }
@@ -150,8 +188,21 @@ export async function refreshSession(refreshToken?: string) {
       : typeof payload?.userId === "string"
         ? payload.userId
         : undefined;
+  const sessionId = typeof payload?.jti === "string" ? payload.jti : undefined;
 
-  if (!userId) {
+  // A refresh token minted before this session table existed carries no
+  // jti and is rejected here — this forces a one-time re-login for
+  // whoever's session was already active at deploy time (see report).
+  if (!userId || !sessionId) {
+    throw unauthorizedSessionError();
+  }
+
+  const [session] = await db.select().from(authSessions).where(eq(authSessions.id, sessionId)).limit(1);
+
+  // Missing, revoked (already rotated away or logged out), expired, or
+  // bound to a different admin than the token's own subject claims — all
+  // treated identically as "this refresh token no longer works."
+  if (!session || session.adminId !== userId || session.revokedAt || session.expiresAt.getTime() < Date.now()) {
     throw unauthorizedSessionError();
   }
 
@@ -168,6 +219,7 @@ export async function refreshSession(refreshToken?: string) {
       requirePasswordReset: admins.requirePasswordReset,
       companyId: companies.id,
       companyName: companies.name,
+      companyStatus: companies.status,
     })
     .from(admins)
     .innerJoin(companies, eq(admins.companyId, companies.id))
@@ -186,7 +238,35 @@ export async function refreshSession(refreshToken?: string) {
     });
   }
 
-  return createSession(admin);
+  if (admin.companyStatus !== "ACTIVE" && admin.companyStatus !== "DEMO") {
+    throw new AppError({
+      message: "This company's account is not active. Contact support.",
+      statusCode: HTTP_STATUS.FORBIDDEN,
+      errorCode: ERROR_CODES.FORBIDDEN,
+    });
+  }
+
+  // Rotation: this session is spent the moment it's used to refresh. If the
+  // same (now-stale) refresh token is presented again — e.g. a stolen copy
+  // replayed after the legitimate client already rotated — the check above
+  // (`session.revokedAt`) denies it on its next use.
+  const rotatedAt = new Date();
+  await db.update(authSessions).set({ revokedAt: rotatedAt, lastUsedAt: rotatedAt }).where(eq(authSessions.id, sessionId));
+
+  return createSession(admin, meta);
+}
+
+/** Revokes the session a refresh token points to, if any. Used by logout —
+ * tolerant of an already-expired/garbage/missing token (nothing to revoke,
+ * not an error) since the client-side cookies/storage get cleared either way. */
+export async function logout(refreshToken?: string) {
+  if (!refreshToken) return;
+
+  const payload = verifyRefreshToken(refreshToken);
+  const sessionId = typeof payload?.jti === "string" ? payload.jti : undefined;
+  if (!sessionId) return;
+
+  await revokeSession(sessionId);
 }
 
 export async function getCurrentUser(userId: string): Promise<SessionUser> {

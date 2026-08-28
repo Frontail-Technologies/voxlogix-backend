@@ -6,11 +6,14 @@ import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 
+// SVG intentionally excluded: an SVG can carry <script>/event-handler content
+// and would render as active content (stored XSS) if opened directly. This
+// only affects NEW uploads — already-stored SVG assets are untouched. See
+// security audit follow-up.
 const allowedMimeTypes = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
-  "image/svg+xml",
 ]);
 
 const allowedAudioMimeTypes = new Set([
@@ -42,7 +45,7 @@ const upload = multer({
     if (!allowedMimeTypes.has(file.mimetype)) {
       callback(
         new AppError({
-          message: "Only JPG, PNG, WEBP, and SVG images are allowed.",
+          message: "Only JPG, PNG, and WEBP images are allowed.",
           statusCode: HTTP_STATUS.BAD_REQUEST,
           errorCode: ERROR_CODES.VALIDATION_ERROR,
         }),

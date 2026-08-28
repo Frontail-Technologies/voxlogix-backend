@@ -29,8 +29,21 @@ async function ensureAiProviderConfig(configId: string) {
   }
 }
 
+// The stored apiKey is a live provider credential and must never round-trip
+// to a client in full — mirrors the masking the admin UI already applies
+// client-side (frontend/src/components/master/settings/platform-settings.tsx),
+// moved server-side so the real key is never sent over the wire at all.
+function maskApiKey(apiKey: string) {
+  if (apiKey.length <= 8) return "*".repeat(8);
+  return `${apiKey.slice(0, 4)}${"*".repeat(10)}${apiKey.slice(-4)}`;
+}
+function maskConfig<T extends { apiKey: string }>(config: T): T {
+  return { ...config, apiKey: maskApiKey(config.apiKey) };
+}
+
 export async function listAiProviderConfigs() {
-  return db.select().from(aiSettings).orderBy(desc(aiSettings.updatedAt));
+  const rows = await db.select().from(aiSettings).orderBy(desc(aiSettings.updatedAt));
+  return rows.map(maskConfig);
 }
 
 export async function createAiProviderConfig(input: CreateAiProviderConfigInput) {
@@ -57,7 +70,7 @@ export async function createAiProviderConfig(input: CreateAiProviderConfigInput)
     status: "Success",
   });
 
-  return created;
+  return maskConfig(created);
 }
 
 export async function updateAiProviderConfig(configId: string, input: UpdateAiSettingsInput) {
@@ -88,7 +101,7 @@ export async function updateAiProviderConfig(configId: string, input: UpdateAiSe
   });
 
   const [updated] = await db.select().from(aiSettings).where(eq(aiSettings.id, configId)).limit(1);
-  return updated;
+  return maskConfig(updated);
 }
 
 export async function setAiProviderConfigDefault(configId: string) {
@@ -107,7 +120,7 @@ export async function setAiProviderConfigDefault(configId: string) {
   });
 
   const [updated] = await db.select().from(aiSettings).where(eq(aiSettings.id, configId)).limit(1);
-  return updated;
+  return maskConfig(updated);
 }
 
 export async function deleteAiProviderConfig(configId: string) {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -15,6 +16,8 @@ import type {
   CreateSignedUploadResult,
   DeleteAssetInput,
   DeleteAssetResult,
+  SignedDownloadInput,
+  SignedDownloadResult,
   UploadAssetInput,
   UploadAssetResult,
 } from "@/lib/storage/storage.types";
@@ -128,10 +131,19 @@ export class S3StorageProvider implements StorageProvider {
     ]);
     const expiresInSeconds = 300;
 
+    // Both ContentType and ContentLength become part of the signed request
+    // (SigV4 signs whichever headers are present on the command). S3 will
+    // reject the client's actual PUT if its Content-Type or Content-Length
+    // don't exactly match what was signed here — this is the real
+    // enforcement mechanism, not just a client-side hint. It doesn't stop a
+    // client from mislabeling a file's true content (no magic-byte check),
+    // but it does prevent uploading a type/size other than what passed
+    // validation above.
     const command = new PutObjectCommand({
       Bucket: env.AWS_S3_BUCKET,
       Key: key,
       ContentType: input.contentType,
+      ContentLength: input.contentLength,
     });
 
     const uploadUrl = await getSignedUrl(this.client, command, {
@@ -147,7 +159,16 @@ export class S3StorageProvider implements StorageProvider {
       method: "PUT",
       headers: {
         "Content-Type": input.contentType,
+        "Content-Length": String(input.contentLength),
       },
     };
+  }
+
+  async createSignedDownloadUrl(input: SignedDownloadInput): Promise<SignedDownloadResult> {
+    const expiresInSeconds = 600; // 10 minutes
+    const command = new GetObjectCommand({ Bucket: env.AWS_S3_BUCKET, Key: input.key });
+    const url = await getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+
+    return { provider: "s3", url, expiresInSeconds };
   }
 }

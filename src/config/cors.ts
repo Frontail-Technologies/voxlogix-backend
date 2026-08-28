@@ -8,7 +8,11 @@ function normalizeOrigins(): string[] {
     .filter(Boolean);
 }
 
-const allowedOrigins = normalizeOrigins();
+// Reused by csrf-origin-check.middleware.ts — the trusted-frontend-origin
+// list is a single source of truth for both "can this origin call the API
+// cross-origin at all" (CORS) and "is this origin allowed to make a
+// cookie-authenticated state-changing request" (CSRF defense).
+export const allowedOrigins = normalizeOrigins();
 
 export const corsOptions: CorsOptions = {
   origin(origin, callback) {

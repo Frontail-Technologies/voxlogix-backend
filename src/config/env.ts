@@ -35,7 +35,9 @@ const envSchema = z.object({
     .int()
     .positive()
     .default(DEFAULT_RATE_LIMIT_MAX_REQUESTS),
-  RATE_LIMIT_ENABLED: z.coerce.boolean().default(false),
+  // Was defaulted to false, meaning any deployment that didn't explicitly set
+  // this env var shipped with no rate limiting at all — see security audit.
+  RATE_LIMIT_ENABLED: z.coerce.boolean().default(true),
   STORAGE_PROVIDER: z.enum(["cloudinary", "s3"]).default("cloudinary"),
   STORAGE_MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(10),
   CLOUDINARY_CLOUD_NAME: z.string().optional().default(""),

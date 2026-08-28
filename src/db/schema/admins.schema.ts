@@ -74,6 +74,35 @@ export const adminLoginHistory = pgTable(
   }),
 );
 
+// Server-side refresh-session tracking: the row's own id doubles as the
+// refresh token's `jti` claim. A refresh token is only honored if its jti
+// matches a session row here that is neither revoked nor past its own
+// expiresAt — this is what makes a stolen/old refresh token revocable
+// (logout, rotation-replay) instead of purely stateless. Access tokens stay
+// unmodified/stateless (15m lifetime; not worth a DB round-trip per request).
+export const authSessions = pgTable(
+  "auth_sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    adminId: uuid("admin_id")
+      .notNull()
+      .references(() => admins.id, { onDelete: "cascade" }),
+    companyId: uuid("company_id")
+      .notNull()
+      .references(() => companies.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    userAgent: text("user_agent"),
+  },
+  (table) => ({
+    adminIndex: index("auth_sessions_admin_id_idx").on(table.adminId),
+  }),
+);
+
 export const passwordResetOtps = pgTable(
   "password_reset_otps",
   {
@@ -106,6 +135,18 @@ export const adminsRelations = relations(admins, ({ one, many }) => ({
     references: [companies.id],
   }),
   loginHistory: many(adminLoginHistory),
+  authSessions: many(authSessions),
+}));
+
+export const authSessionsRelations = relations(authSessions, ({ one }) => ({
+  admin: one(admins, {
+    fields: [authSessions.adminId],
+    references: [admins.id],
+  }),
+  company: one(companies, {
+    fields: [authSessions.companyId],
+    references: [companies.id],
+  }),
 }));
 
 export const adminLoginHistoryRelations = relations(

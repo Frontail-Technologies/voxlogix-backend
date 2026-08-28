@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import {
   createSignedImageUpload,
   deleteImageAsset,
+  getSignedMediaUrl,
   uploadAudioAsset,
   uploadImageAsset,
 } from "@/modules/uploads/uploads.service";
@@ -45,9 +46,25 @@ export const postSignedUpload = asyncHandler(
   },
 );
 
+export const getMediaSignedUrl = asyncHandler(
+  async (request: Request, response: Response) => {
+    const key = String(request.query.key ?? "");
+    const resourceType = request.query.resourceType as "image" | "video" | "raw" | undefined;
+    const result = await getSignedMediaUrl(key, resourceType, {
+      companyId: request.user?.companyId,
+      role: String(request.user?.role),
+    });
+
+    return sendSuccess(response, { data: result });
+  },
+);
+
 export const removeUploadAsset = asyncHandler(
   async (request: Request, response: Response) => {
-    const result = await deleteImageAsset(request.body);
+    const result = await deleteImageAsset(request.body, {
+      companyId: request.user?.companyId,
+      role: String(request.user?.role),
+    });
 
     return sendSuccess(response, {
       message: "Uploaded asset deleted successfully",

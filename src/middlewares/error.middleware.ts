@@ -37,9 +37,16 @@ export function errorMiddleware(
   }
 
   if (error instanceof Error) {
+    // Unwrapped errors (raw DB/driver/filesystem/SDK exceptions) can contain
+    // schema names, file paths, or other internal detail — only AppError's
+    // message is considered safe to have chosen for a client audience.
+    // Full detail is always logged server-side; only surfaced to the client
+    // in development.
+    console.error("[unhandled error]", error);
+
     return sendError(response, {
       statusCode: HTTP_STATUS.INTERNAL_SERVER_ERROR,
-      message: error.message || "Internal server error",
+      message: env.NODE_ENV === "development" ? error.message || "Internal server error" : "Internal server error",
       errorCode: ERROR_CODES.INTERNAL_SERVER_ERROR,
       errors:
         env.NODE_ENV === "development"

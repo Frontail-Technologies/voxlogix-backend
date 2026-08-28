@@ -7,16 +7,23 @@ import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
+import { isMobileClient } from "@/shared/helpers/client-platform";
 
 import {
   changePassword,
   getCurrentUser,
   login,
+  logout,
   refreshSession,
   requestPasswordReset,
   resetPasswordWithOtp,
   verifyPasswordResetOtp,
 } from "./auth.service";
+
+function userAgentOf(request: Request) {
+  const value = request.headers["user-agent"];
+  return typeof value === "string" ? value.slice(0, 255) : undefined;
+}
 
 function getSessionCookieOptions(): CookieOptions {
   return {
@@ -37,9 +44,6 @@ function clearSessionCookies(response: Response) {
   response.clearCookie(appConfig.cookieNames.accessToken, getSessionCookieOptions());
   response.clearCookie(appConfig.cookieNames.refreshToken, getSessionCookieOptions());
 }
-function isMobileClient(request: Request) {
-  return request.headers["x-client-platform"] === "mobile" || request.query.client === "mobile";
-}
 
 function sessionResponseData(request: Request, input: { user: unknown; accessToken: string; refreshToken: string }) {
   return isMobileClient(request) ? input : input.user;
@@ -56,9 +60,18 @@ function refreshTokenFromRequest(request: Request) {
 }
 
 export const postLogin = asyncHandler(async (request: Request, response: Response) => {
-  const { accessToken, refreshToken, user } = await login(request.body);
+  const { accessToken, refreshToken, user } = await login(request.body, { userAgent: userAgentOf(request) });
 
-  setSessionCookies(response, accessToken, refreshToken);
+  // Mobile authenticates via Bearer token in the response body and never
+  // reads cookies — setting them anyway was harmless in isolation, but on
+  // Android, native networking (OkHttp) can silently persist and resend a
+  // Set-Cookie value on later requests. That stale cookie, combined with
+  // mobile never sending a browser Origin header, was tripping the CSRF
+  // origin check on subsequent logins and blocking them with a 403 before
+  // the real credential check ever ran. See auth debug report.
+  if (!isMobileClient(request)) {
+    setSessionCookies(response, accessToken, refreshToken);
+  }
 
   return sendSuccess(response, {
     message: "Logged in successfully",
@@ -85,9 +98,11 @@ export const getMe = asyncHandler(async (request: Request, response: Response) =
 export const postRefresh = asyncHandler(async (request: Request, response: Response) => {
   try {
     const currentRefreshToken = refreshTokenFromRequest(request);
-    const { accessToken, refreshToken, user } = await refreshSession(currentRefreshToken);
+    const { accessToken, refreshToken, user } = await refreshSession(currentRefreshToken, { userAgent: userAgentOf(request) });
 
-    setSessionCookies(response, accessToken, refreshToken);
+    if (!isMobileClient(request)) {
+      setSessionCookies(response, accessToken, refreshToken);
+    }
 
     return sendSuccess(response, {
       message: "Session refreshed successfully",
@@ -99,7 +114,9 @@ export const postRefresh = asyncHandler(async (request: Request, response: Respo
   }
 });
 
-export const postLogout = asyncHandler(async (_request: Request, response: Response) => {
+export const postLogout = asyncHandler(async (request: Request, response: Response) => {
+  const currentRefreshToken = refreshTokenFromRequest(request);
+  await logout(currentRefreshToken);
   clearSessionCookies(response);
 
   return sendSuccess(response, { message: "Logged out successfully" });
