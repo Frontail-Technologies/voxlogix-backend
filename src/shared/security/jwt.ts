@@ -7,27 +7,23 @@ type TokenPayload = JwtPayload & {
   role?: string;
   email?: string;
   companyId?: string;
-  /** Refresh tokens only: the auth_sessions row id this token is bound to.
-   * Access tokens never carry this — they stay stateless. */
   jti?: string;
 };
 
-// Pinned explicitly rather than relying on jsonwebtoken's default algorithm
-// inference — defense-in-depth against alg-confusion-class attacks even
-// though a plain-string HMAC secret already prevents them by default.
 const JWT_ALGORITHM = "HS256";
 
-function signToken(
-  payload: TokenPayload,
-  secret: string,
-  expiresIn: string,
-) {
-  return jwt.sign(payload, secret, { expiresIn, algorithm: JWT_ALGORITHM } as SignOptions);
+function signToken(payload: TokenPayload, secret: string, expiresIn: string) {
+  return jwt.sign(payload, secret, {
+    expiresIn,
+    algorithm: JWT_ALGORITHM,
+  } as SignOptions);
 }
 
 function verifyToken(token: string, secret: string): TokenPayload | null {
   try {
-    return jwt.verify(token, secret, { algorithms: [JWT_ALGORITHM] }) as TokenPayload;
+    return jwt.verify(token, secret, {
+      algorithms: [JWT_ALGORITHM],
+    }) as TokenPayload;
   } catch {
     return null;
   }

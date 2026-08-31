@@ -29,10 +29,6 @@ async function ensureAiProviderConfig(configId: string) {
   }
 }
 
-// The stored apiKey is a live provider credential and must never round-trip
-// to a client in full — mirrors the masking the admin UI already applies
-// client-side (frontend/src/components/master/settings/platform-settings.tsx),
-// moved server-side so the real key is never sent over the wire at all.
 function maskApiKey(apiKey: string) {
   if (apiKey.length <= 8) return "*".repeat(8);
   return `${apiKey.slice(0, 4)}${"*".repeat(10)}${apiKey.slice(-4)}`;
@@ -42,14 +38,21 @@ function maskConfig<T extends { apiKey: string }>(config: T): T {
 }
 
 export async function listAiProviderConfigs() {
-  const rows = await db.select().from(aiSettings).orderBy(desc(aiSettings.updatedAt));
+  const rows = await db
+    .select()
+    .from(aiSettings)
+    .orderBy(desc(aiSettings.updatedAt));
   return rows.map(maskConfig);
 }
 
-export async function createAiProviderConfig(input: CreateAiProviderConfigInput) {
+export async function createAiProviderConfig(
+  input: CreateAiProviderConfigInput,
+) {
   const created = await db.transaction(async (tx) => {
     if (input.isDefault) {
-      await tx.update(aiSettings).set({ isDefault: false, updatedAt: new Date() });
+      await tx
+        .update(aiSettings)
+        .set({ isDefault: false, updatedAt: new Date() });
     }
 
     const [row] = await tx
@@ -73,7 +76,10 @@ export async function createAiProviderConfig(input: CreateAiProviderConfigInput)
   return maskConfig(created);
 }
 
-export async function updateAiProviderConfig(configId: string, input: UpdateAiSettingsInput) {
+export async function updateAiProviderConfig(
+  configId: string,
+  input: UpdateAiSettingsInput,
+) {
   await ensureAiProviderConfig(configId);
 
   await db.transaction(async (tx) => {
@@ -100,7 +106,11 @@ export async function updateAiProviderConfig(configId: string, input: UpdateAiSe
     status: "Success",
   });
 
-  const [updated] = await db.select().from(aiSettings).where(eq(aiSettings.id, configId)).limit(1);
+  const [updated] = await db
+    .select()
+    .from(aiSettings)
+    .where(eq(aiSettings.id, configId))
+    .limit(1);
   return maskConfig(updated);
 }
 
@@ -108,8 +118,14 @@ export async function setAiProviderConfigDefault(configId: string) {
   await ensureAiProviderConfig(configId);
 
   await db.transaction(async (tx) => {
-    await tx.update(aiSettings).set({ isDefault: false, updatedAt: new Date() }).where(ne(aiSettings.id, configId));
-    await tx.update(aiSettings).set({ isDefault: true, updatedAt: new Date() }).where(eq(aiSettings.id, configId));
+    await tx
+      .update(aiSettings)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(ne(aiSettings.id, configId));
+    await tx
+      .update(aiSettings)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(eq(aiSettings.id, configId));
   });
 
   await createPlatformActivity({
@@ -119,7 +135,11 @@ export async function setAiProviderConfigDefault(configId: string) {
     status: "Success",
   });
 
-  const [updated] = await db.select().from(aiSettings).where(eq(aiSettings.id, configId)).limit(1);
+  const [updated] = await db
+    .select()
+    .from(aiSettings)
+    .where(eq(aiSettings.id, configId))
+    .limit(1);
   return maskConfig(updated);
 }
 
@@ -141,7 +161,9 @@ export async function getGeneralSettingsDetail() {
   return ensurePlatformGeneralSettings();
 }
 
-export async function updateGeneralSettingsDetail(input: UpdateGeneralSettingsInput) {
+export async function updateGeneralSettingsDetail(
+  input: UpdateGeneralSettingsInput,
+) {
   const settings = await ensurePlatformGeneralSettings();
 
   await db

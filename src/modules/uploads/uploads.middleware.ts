@@ -6,15 +6,7 @@ import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 
-// SVG intentionally excluded: an SVG can carry <script>/event-handler content
-// and would render as active content (stored XSS) if opened directly. This
-// only affects NEW uploads — already-stored SVG assets are untouched. See
-// security audit follow-up.
-const allowedMimeTypes = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
+const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const allowedAudioMimeTypes = new Set([
   "audio/webm",

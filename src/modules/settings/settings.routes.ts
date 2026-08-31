@@ -24,14 +24,15 @@ import {
 import { USER_ROLES } from "@/shared/constants";
 
 const settingsRouter = Router();
-// AI provider config and general platform settings are platform-wide (shared
-// across every company), not company-scoped — only MASTER may view or change
-// them. These were previously unauthenticated, which leaked live provider API
-// keys and allowed anonymous writes/deletes; see security audit.
+
 const platformSettingsOnly = requireRole(USER_ROLES.MASTER);
 
 settingsRouter.get("/general", getGeneralSettings);
-settingsRouter.get("/company-access", requireAuth, getCurrentCompanyAccessSettings);
+settingsRouter.get(
+  "/company-access",
+  requireAuth,
+  getCurrentCompanyAccessSettings,
+);
 settingsRouter.patch(
   "/general",
   requireAuth,
@@ -42,12 +43,21 @@ settingsRouter.patch(
   patchGeneralSettings,
 );
 settingsRouter.get("/ai", requireAuth, platformSettingsOnly, getAiSettings);
-settingsRouter.post("/ai", requireAuth, platformSettingsOnly, validate({ body: createAiProviderConfigBodySchema }), postAiSettings);
+settingsRouter.post(
+  "/ai",
+  requireAuth,
+  platformSettingsOnly,
+  validate({ body: createAiProviderConfigBodySchema }),
+  postAiSettings,
+);
 settingsRouter.patch(
   "/ai/:configId",
   requireAuth,
   platformSettingsOnly,
-  validate({ params: aiProviderConfigIdParamsSchema, body: updateAiSettingsBodySchema }),
+  validate({
+    params: aiProviderConfigIdParamsSchema,
+    body: updateAiSettingsBodySchema,
+  }),
   patchAiSettings,
 );
 settingsRouter.patch(
