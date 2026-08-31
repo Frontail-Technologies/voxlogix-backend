@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 
 import {
   addLogAttachment,
+  bulkDeleteLogs,
   createLog,
   deleteLog,
   deleteLogAttachment,
@@ -100,6 +101,15 @@ export const removeLogAttachment = asyncHandler(async (request: Request, respons
 export const removeLog = asyncHandler(async (request: Request, response: Response) => {
   return sendSuccess(response, {
     data: await deleteLog(companyIdOf(request), paramOf(request, "logId"), {
+      id: String(request.user?.id ?? ""),
+      role: String(request.user?.role ?? ""),
+    }),
+  });
+});
+
+export const bulkRemoveLogs = asyncHandler(async (request: Request, response: Response) => {
+  return sendSuccess(response, {
+    data: await bulkDeleteLogs(companyIdOf(request), request.body.ids, {
       id: String(request.user?.id ?? ""),
       role: String(request.user?.role ?? ""),
     }),

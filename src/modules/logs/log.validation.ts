@@ -56,6 +56,17 @@ export const updateLogStatusBodySchema = z.object({
   notes: z.string().trim().max(2000).optional(),
 });
 
+// ids are deduped and capped well below any batch size that would be a realistic bulk
+// action from a paginated logs table (a page is at most a few dozen rows) — this is not
+// meant to accommodate a full-table wipe from the client.
+export const bulkDeleteLogsBodySchema = z.object({
+  ids: z
+    .array(z.string().uuid())
+    .min(1, "At least one log id is required")
+    .max(100, "You can delete at most 100 logs at a time")
+    .transform((ids) => Array.from(new Set(ids))),
+});
+
 export const logAttachmentBodySchema = z.object({
   url: z.string().trim().url(),
   key: z.string().trim().max(500).optional().nullable(),

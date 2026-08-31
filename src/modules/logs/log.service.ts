@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, ilike, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, lte, or, sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -443,4 +443,55 @@ export async function deleteLog(companyId: string, logId: string, actor: { id: s
   );
 
   return { id: logId };
+}
+
+export async function bulkDeleteLogs(companyId: string, ids: string[], actor: { id: string; role: string }) {
+  const rows = await db
+    .select({ id: operationalLogs.id, createdById: operationalLogs.createdById })
+    .from(operationalLogs)
+    .where(and(eq(operationalLogs.companyId, companyId), inArray(operationalLogs.id, ids)));
+
+  // Fail-safe/atomic: every requested id must resolve within the caller's own company and
+  // pass the same owner-or-privileged rule as a single delete, or nothing is deleted. Both
+  // rejections are deliberately generic — the caller never learns whether a given id was
+  // missing, belonged to another company, or just wasn't theirs to delete.
+  if (rows.length !== ids.length) {
+    throw new AppError({
+      message: "One or more logs could not be found.",
+      statusCode: HTTP_STATUS.NOT_FOUND,
+      errorCode: ERROR_CODES.NOT_FOUND,
+    });
+  }
+
+  const isPrivileged = LOG_DELETE_PRIVILEGED_ROLES.includes(actor.role);
+  const hasUnauthorized = rows.some((row) => row.createdById !== actor.id && !isPrivileged);
+  if (hasUnauthorized) {
+    throw new AppError({
+      message: "You do not have permission to delete one or more of these logs.",
+      statusCode: HTTP_STATUS.FORBIDDEN,
+      errorCode: ERROR_CODES.FORBIDDEN,
+    });
+  }
+
+  const ids_ = rows.map((row) => row.id);
+  const attachments = await db
+    .select({ key: logAttachments.key })
+    .from(logAttachments)
+    .where(inArray(logAttachments.logId, ids_));
+
+  // Single statement, scoped by companyId again as defense in depth — already atomic by
+  // itself, same as the single-delete path above (cascades/nulled reading refs identical).
+  await db.delete(operationalLogs).where(and(eq(operationalLogs.companyId, companyId), inArray(operationalLogs.id, ids_)));
+
+  await Promise.all(
+    attachments
+      .filter((attachment): attachment is { key: string } => Boolean(attachment.key))
+      .map((attachment) =>
+        deleteStorageAssetByKey(attachment.key).catch((error) => {
+          console.error("[log.service] failed to delete storage asset during bulk delete", error);
+        }),
+      ),
+  );
+
+  return { ids: ids_ };
 }

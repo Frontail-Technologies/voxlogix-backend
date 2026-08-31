@@ -6,6 +6,7 @@ import { validate } from "@/middlewares/validate.middleware";
 import { USER_ROLES } from "@/shared/constants";
 
 import {
+  bulkRemoveLogs,
   getLogDetail,
   getLogs,
   patchLog,
@@ -16,6 +17,7 @@ import {
   removeLogAttachment,
 } from "./log.controller";
 import {
+  bulkDeleteLogsBodySchema,
   listLogsQuerySchema,
   logAttachmentBodySchema,
   logAttachmentIdParamsSchema,
@@ -36,6 +38,7 @@ logsRouter.patch("/:logId", validate({ params: logIdParamsSchema, body: updateLo
 logsRouter.patch("/:logId/status", validate({ params: logIdParamsSchema, body: updateLogStatusBodySchema }), patchLogStatus);
 logsRouter.post("/:logId/attachments", validate({ params: logIdParamsSchema, body: logAttachmentBodySchema }), postLogAttachment);
 logsRouter.delete("/:logId/attachments/:attachmentId", validate({ params: logAttachmentIdParamsSchema }), removeLogAttachment);
+logsRouter.post("/bulk-delete", validate({ body: bulkDeleteLogsBodySchema }), bulkRemoveLogs);
 logsRouter.delete("/:logId", validate({ params: logIdParamsSchema }), removeLog);
 
 export { logsRouter };
