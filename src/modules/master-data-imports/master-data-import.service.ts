@@ -311,15 +311,18 @@ async function importIssueCategories(companyId: string, rows: Row[], result: She
       continue;
     }
 
+    // Issue Category is lookup/option data — no unique business ID, no row relationship.
+    // Uniqueness is company + normalized name only, matching normalizedBusinessKey's
+    // existing trim+lowercase convention used elsewhere in this file. Re-uploading the same
+    // name (even with different EQUIPMENT FUNCTIONS/FAILURE MODE alongside it) must update
+    // the same row, not create a second one for the same category.
     const [existing] = await db
       .select({ id: issueCategories.id })
       .from(issueCategories)
       .where(
         and(
           eq(issueCategories.companyId, companyId),
-          eq(issueCategories.name, name),
-          sql`coalesce(${issueCategories.equipmentFunction}, '') = ${equipmentFunction ?? ""}`,
-          sql`coalesce(${issueCategories.failureMode}, '') = ${failureMode ?? ""}`,
+          sql`lower(${issueCategories.name}) = ${normalizedBusinessKey(name)}`,
         ),
       )
       .limit(1);
@@ -569,21 +572,24 @@ async function importKaizen(companyId: string, rows: Row[], result: SheetImportS
     }
 
     const department = optionalValue(row, "DEPARTMENT");
+    // Kaizen Category is lookup/option data — dedupe by company + normalized category name
+    // only (same convention as Issue Categories above), not name+department.
     const [existing] = await db
       .select({ id: kaizenCategories.id })
       .from(kaizenCategories)
       .where(
         and(
           eq(kaizenCategories.companyId, companyId),
-          eq(kaizenCategories.category, category),
-          sql`coalesce(${kaizenCategories.department}, '') = ${department ?? ""}`,
+          sql`lower(${kaizenCategories.category}) = ${normalizedBusinessKey(category)}`,
         ),
       )
       .limit(1);
 
     const payload = {
       companyId,
-      kaizenCategoryCode: optionalValue(row, "KAIZEN CATEGORY ID") || category.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      // No synthetic fallback ID — Kaizen Category is lookup data with no business unique ID
+      // requirement; leave this null when the sheet doesn't supply one.
+      kaizenCategoryCode: optionalValue(row, "KAIZEN CATEGORY ID"),
       category,
       department,
       kaizenStatus: optionalValue(row, "STATUS"),
@@ -722,10 +728,15 @@ type SampleSheet = {
   rows: string[][];
 };
 
+// Entity sheets (Equipment, Measuring Points, Meter Counters, Users): each row is a
+// complete record for one business-ID-identified entity — the ID column stays and is
+// genuinely required. Lookup sheets (Issue Categories, Safety Reporting, Kaizen,
+// Sections/Locations/Shift): each relevant column is an independent, selectable option —
+// no business ID column, and values across a row don't imply any relationship between them.
 const SAMPLE_SHEETS: SampleSheet[] = [
   {
     name: SHEETS.equipment,
-    description: "Company equipment assets used by logs, measurements, counters, manuals, and reports.",
+    description: "Company equipment assets used by logs, measurements, counters, manuals, and reports. Unique ID required for each record.",
     headers: ["EQUIPMENT ID", "EQUIPMENT NAME", "SECTION", "SUB LOCATION", "EQUIPMENT CATEGORY", "MAKE BRAND", "MODEL NUMBER", "COMMISSIONED DATE", "CRITICALITY", "NOTES"],
     rows: [
       ["EQ-001", "Air Compressor 1", "Utilities", "Compressor Room", "Utilities", "Atlas Copco", "GA 18", "2024-01-15", "High", "Primary plant air compressor"],
@@ -734,25 +745,25 @@ const SAMPLE_SHEETS: SampleSheet[] = [
   },
   {
     name: SHEETS.issueCategories,
-    description: "Issue mapping used by equipment/shift AI extraction, severity defaults, reports, and dropdowns.",
-    headers: ["ISSUE CATEGORY ID", "ISSUE CATEGORY", "EQUIPMENT FUNCTIONS", "FAILURE MODE", "ISSUE STATUS", "SEVERITY LEVEL", "SPARE PART/ CONSUMABLES REF", "MAINTENANCE TYPE", "PRODUCTION IMPACT", "NOTES"],
+    description: "Issue mapping used by equipment/shift AI extraction, severity defaults, reports, and dropdowns. Upload values only — unique ID is not required.",
+    headers: ["ISSUE CATEGORY", "EQUIPMENT FUNCTIONS", "FAILURE MODE", "ISSUE STATUS", "SEVERITY LEVEL", "SPARE PART/ CONSUMABLES REF", "MAINTENANCE TYPE", "PRODUCTION IMPACT", "NOTES"],
     rows: [
-      ["IC-001", "Hydraulic Leak", "Hydraulic System", "Seal leak", "Open", "High", "Seal kit", "Corrective", "Line stoppage", "Use for oil or hydraulic leakage"],
-      ["IC-002", "Abnormal Noise", "Rotating Equipment", "Bearing wear", "Pending investigation", "Medium", "Bearing", "Inspection", "Reduced speed", "Use for vibration or grinding noise"],
+      ["Hydraulic Leak", "Hydraulic System", "Seal leak", "Open", "High", "Seal kit", "Corrective", "Line stoppage", "Use for oil or hydraulic leakage"],
+      ["Abnormal Noise", "Rotating Equipment", "Bearing wear", "Pending investigation", "Medium", "Bearing", "Inspection", "Reduced speed", "Use for vibration or grinding noise"],
     ],
   },
   {
     name: SHEETS.safety,
-    description: "Safety reporting master used by safety module dropdowns, AI mapping, reportable flags, and PPE defaults.",
-    headers: ["SAFETY CATEGORY ID", "INCIDENT CATEGORY", "INCIDENT TYPE", "SEVERITY LEVEL", "REQUIRES PPE", "PPE TYPE", "REPORTABLE (FACTORIES ACT)", "IMMEDIATE ACTION REQUIRED", "NOTES"],
+    description: "Safety reporting master used by safety module dropdowns, AI mapping, reportable flags, and PPE defaults. Upload values only — unique ID is not required.",
+    headers: ["INCIDENT CATEGORY", "INCIDENT TYPE", "SEVERITY LEVEL", "REQUIRES PPE", "PPE TYPE", "REPORTABLE (FACTORIES ACT)", "IMMEDIATE ACTION REQUIRED", "NOTES"],
     rows: [
-      ["SC-001", "Unsafe Condition", "Oil spill near walkway", "High", "YES", "Safety shoes, gloves", "NO", "YES", "Barricade and clean immediately"],
-      ["SC-002", "Near Miss", "Material dropped from height", "Critical", "YES", "Helmet", "YES", "YES", "Escalate to safety officer"],
+      ["Unsafe Condition", "Oil spill near walkway", "High", "YES", "Safety shoes, gloves", "NO", "YES", "Barricade and clean immediately"],
+      ["Near Miss", "Material dropped from height", "Critical", "YES", "Helmet", "YES", "YES", "Escalate to safety officer"],
     ],
   },
   {
     name: SHEETS.measuringPoints,
-    description: "Manual measurement points. Voice is disabled; feed alert only when reading is outside lower/upper limits.",
+    description: "Manual measurement points. Voice is disabled; feed alert only when reading is outside lower/upper limits. Unique ID required for each record.",
     headers: ["POINT ID", "MEASUREMENT NAME", "EQUIPMENT ID", "EQUIPMENT NAME", "MEASUREMENT UNIT", "TARGET VALUE", "LOWER LIMIT", "UPPER LIMIT", "MEASUREMENT FREQUENCY", "ALERT SEVERITY", "INSTRUMENT TAG", "NOTES"],
     rows: [
       ["MP-001", "Bearing Temperature", "EQ-001", "Air Compressor 1", "C", "70", "40", "85", "Every Shift", "High", "TT-101", "Alert if temperature crosses limit"],
@@ -761,7 +772,7 @@ const SAMPLE_SHEETS: SampleSheet[] = [
   },
   {
     name: SHEETS.meterCounters,
-    description: "Manual counter readings. Voice is disabled; feed alert only when consumption/deviation crosses threshold.",
+    description: "Manual counter readings. Voice is disabled; feed alert only when consumption/deviation crosses threshold. Unique ID required for each record.",
     headers: ["COUNTER ID", "COUNTER NAME", "EQUIPMENT ID", "LOCATION", "COUNTER UoM", "METER TYPE", "READING FREQUENCY", "INITIAL READING", "RESET VALUE", "EXPECTED DAILY CONSUMPTION", "ALERT DEVIATION PCT", "NOTES"],
     rows: [
       ["MC-001", "Compressor Runtime", "EQ-001", "Compressor Room", "hours", "Runtime", "Daily", "15000", "0", "20", "25", "Alert if runtime deviates"],
@@ -770,7 +781,7 @@ const SAMPLE_SHEETS: SampleSheet[] = [
   },
   {
     name: SHEETS.users,
-    description: "Company users. Roles map as Manager=Admin, Supervisor=Planner, Operator=Execution.",
+    description: "Company users. Roles map as Manager=Admin, Supervisor=Planner, Operator=Execution. Unique ID required for each record.",
     headers: ["EMPLOYEE ID", "FULL NAME", "EMAIL", "PHONE", "ROLE", "ACTIVE"],
     rows: [
       ["EMP-001", "Alex Rivera", "alex.rivera@example.com", "+919024218889", "Manager", "YES"],
@@ -780,20 +791,20 @@ const SAMPLE_SHEETS: SampleSheet[] = [
   },
   {
     name: SHEETS.kaizen,
-    description: "Kaizen/suggestion categories used by kaizen module dropdowns and report mapping.",
-    headers: ["KAIZEN CATEGORY ID", "KAIZEN CATEGORY", "DEPARTMENT", "STATUS", "IMMEDIATE ACTION REQUIRED", "NOTES"],
+    description: "Kaizen/suggestion categories used by kaizen module dropdowns and report mapping. Upload values only — unique ID is not required.",
+    headers: ["KAIZEN CATEGORY", "DEPARTMENT", "STATUS", "IMMEDIATE ACTION REQUIRED", "NOTES"],
     rows: [
-      ["KZ-001", "Process Improvement", "Maintenance", "Open", "NO", "General improvement idea"],
-      ["KZ-002", "Safety Improvement", "Safety", "Open", "YES", "Use when immediate correction is required"],
+      ["Process Improvement", "Maintenance", "Open", "NO", "General improvement idea"],
+      ["Safety Improvement", "Safety", "Open", "YES", "Use when immediate correction is required"],
     ],
   },
   {
     name: SHEETS.locations,
-    description: "Plant hierarchy, shift details, departments, and location dropdowns.",
-    headers: ["SECTION ID", "SECTION", "SUB LOCATION ID", "LOCATION", "AREA SUPERVISOR", "SHIFT DETAILS", "DEPARTMENT"],
+    description: "Plant hierarchy, shift details, departments, and location dropdowns. Upload values only — unique ID is not required.",
+    headers: ["SECTION", "LOCATION", "AREA SUPERVISOR", "SHIFT DETAILS", "DEPARTMENT"],
     rows: [
-      ["SEC-001", "Utilities", "LOC-001", "Compressor Room", "Neha Shah", "A Shift", "Maintenance"],
-      ["SEC-002", "Press Shop", "LOC-002", "Press Bay 1", "Amit Desai", "B Shift", "Production"],
+      ["Utilities", "Compressor Room", "Neha Shah", "A Shift", "Maintenance"],
+      ["Press Shop", "Press Bay 1", "Amit Desai", "B Shift", "Production"],
     ],
   },
 ];
