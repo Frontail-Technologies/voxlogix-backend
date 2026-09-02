@@ -100,10 +100,15 @@ export async function listMasterDataOptions(input: ListMasterDataOptionsInput): 
     if (fieldKey === "maintenanceType") return uniqueOptions(rows.map((row) => row.maintenanceType));
     if (fieldKey === "productionImpact") return uniqueOptions(rows.map((row) => row.productionImpact));
 
-    return rows.map((row) => ({
-      value: row.name,
-      label: row.name,
-      meta: row,
+    // Issue Category is lookup/option data (no business unique ID, no row relationship) — a
+    // module field picking this source almost never uses one of the fieldKeys above (its own
+    // auto-generated key, e.g. "issueCategory", won't match any of them), so this default
+    // branch is what actually powers the real "Issue Category" dropdown in practice.
+    // uniqueOptions here is what makes repeat imports of the same category name collapse to
+    // one selectable option instead of one per underlying row.
+    return uniqueOptions(rows.map((row) => row.name)).map((option) => ({
+      ...option,
+      meta: rows.find((row) => row.name === option.value),
     }));
   }
 
@@ -224,7 +229,10 @@ export async function listMasterDataOptions(input: ListMasterDataOptionsInput): 
 
     if (fieldKey === "shift") return uniqueOptions(rows.map((row) => row.shiftDetails));
     if (fieldKey === "section") return uniqueOptions(rows.map((row) => row.section));
-    if (fieldKey === "subLocation") return uniqueOptions(rows.map((row) => row.subLocation));
+    // "location" is the far more natural field label an admin would type (matching how the
+    // client refers to this lookup type) than the schema's internal "subLocation" name — both
+    // resolve to the same independent, deduped Location list.
+    if (fieldKey === "subLocation" || fieldKey === "location") return uniqueOptions(rows.map((row) => row.subLocation));
     if (fieldKey === "department") return uniqueOptions(rows.map((row) => row.department));
 
     return rows.map((row) => ({
@@ -250,9 +258,10 @@ export async function listMasterDataOptions(input: ListMasterDataOptionsInput): 
   if (fieldKey === "status") return uniqueOptions(rows.map((row) => row.kaizenStatus));
   if (fieldKey === "immediateActionRequired") return yesNoOptions(rows.map((row) => row.immediateActionRequired));
 
-  return rows.map((row) => ({
-    value: row.category,
-    label: row.category,
-    meta: row,
+  // Same reasoning as issue_categories above: this default branch is what actually powers
+  // the real "Kaizen Category" dropdown in practice, so it needs to be deduped here too.
+  return uniqueOptions(rows.map((row) => row.category)).map((option) => ({
+    ...option,
+    meta: rows.find((row) => row.category === option.value),
   }));
 }
