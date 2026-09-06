@@ -68,6 +68,26 @@ async function enabledModuleIdsForCompany(companyId: string) {
   return rows.map((row) => row.moduleId);
 }
 
+// Reused by master-data import (preview + commit) to authoritatively decide which
+// module-gated sheets this company may import — the same server-side
+// company_module_access source everything else in the app already uses, never a
+// second module-state system and never anything the browser can influence.
+export async function getEnabledModuleNamesForCompany(companyId: string): Promise<Set<string>> {
+  const rows = await db
+    .select({ name: modules.name })
+    .from(companyModuleAccess)
+    .innerJoin(modules, eq(companyModuleAccess.moduleId, modules.id))
+    .where(
+      and(
+        eq(companyModuleAccess.companyId, companyId),
+        eq(companyModuleAccess.enabled, true),
+        eq(modules.status, "ACTIVE"),
+      ),
+    );
+
+  return new Set(rows.map((row) => row.name));
+}
+
 function shouldFilterByCompanyAccess(input: ListModulesInput) {
   return Boolean(input.companyId) && input.role !== USER_ROLES.MASTER;
 }

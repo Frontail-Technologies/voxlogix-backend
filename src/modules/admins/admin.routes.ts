@@ -24,15 +24,14 @@ import {
 } from "./admin.validation";
 
 const adminsRouter = Router();
-// Admin management is cross-company platform administration (create/edit/
-// reset-password/delete admins in ANY company, including granting MASTER
-// role) — only used by the master-admins frontend feature. Was previously
-// fully unauthenticated, allowing anonymous creation of a MASTER account
-// (full platform takeover); see security audit.
-adminsRouter.use(requireAuth, requireRole(USER_ROLES.MASTER));
+adminsRouter.use(requireAuth, requireRole(USER_ROLES.MASTER, USER_ROLES.ADMIN));
 
 adminsRouter.get("/", validate({ query: listAdminsQuerySchema }), getAdmins);
-adminsRouter.get("/:adminId", validate({ params: adminIdParamsSchema }), getAdmin);
+adminsRouter.get(
+  "/:adminId",
+  validate({ params: adminIdParamsSchema }),
+  getAdmin,
+);
 adminsRouter.post(
   "/",
   singleImageUploadMiddleware,

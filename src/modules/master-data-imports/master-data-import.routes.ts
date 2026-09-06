@@ -2,7 +2,13 @@ import { Router } from "express";
 
 import { requireAuth } from "@/middlewares/auth-placeholder.middleware";
 import { requireRole } from "@/middlewares/role-placeholder.middleware";
-import { getFinalMasterDataSampleTemplate, postFinalMasterDataTemplate } from "@/modules/master-data-imports/master-data-import.controller";
+import { validate } from "@/middlewares/validate.middleware";
+import {
+  getFinalMasterDataSampleTemplate,
+  postMasterDataImportCommit,
+  postMasterDataImportPreview,
+} from "@/modules/master-data-imports/master-data-import.controller";
+import { commitMasterDataImportBodySchema } from "@/modules/master-data-imports/master-data-import.validation";
 import {
   ensureUploadedFile,
   singleSpreadsheetUploadMiddleware,
@@ -19,12 +25,20 @@ masterDataImportsRouter.get(
 );
 
 masterDataImportsRouter.post(
-  "/final-template",
+  "/preview",
   requireAuth,
   requireRole(USER_ROLES.MASTER, USER_ROLES.ADMIN),
   singleSpreadsheetUploadMiddleware,
   ensureUploadedFile,
-  postFinalMasterDataTemplate,
+  postMasterDataImportPreview,
+);
+
+masterDataImportsRouter.post(
+  "/commit",
+  requireAuth,
+  requireRole(USER_ROLES.MASTER, USER_ROLES.ADMIN),
+  validate({ body: commitMasterDataImportBodySchema }),
+  postMasterDataImportCommit,
 );
 
 export { masterDataImportsRouter };
