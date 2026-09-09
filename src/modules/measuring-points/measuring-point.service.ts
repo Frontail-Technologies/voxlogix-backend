@@ -92,7 +92,7 @@ async function getMeasurementModule(tx: DbExecutor) {
     )
     .limit(1);
 
-  return module ?? { id: null, name: "Measurement Point", type: "Measurement Point" };
+  return module ?? { id: null, name: "Measurement Point", type: "MEASUREMENT_POINT" };
 }
 
 async function createMeasurementAlertLog(
@@ -252,7 +252,13 @@ export async function createMeasuringPointReading(input: MeasuringPointReadingIn
       operationalLogId = await createMeasurementAlertLog(tx, {
         companyId: input.companyId,
         moduleId: module.id,
-        moduleType: module.name || module.type || "Measurement Point",
+        // The canonical type key (moduleTypes.name, e.g. "MEASUREMENT_POINT") — not the
+        // human-readable module name — matching what every other log-creation path and the
+        // Home Feed's module filter both use. Using module.name here was the root cause of
+        // out-of-limit alerts vanishing under the "Measuring Point" feed filter: manually
+        // created logs and the filter pill both compare against this canonical key, but
+        // alert logs were being tagged with the display name ("Measurement Point") instead.
+        moduleType: module.type || module.name || "MEASUREMENT_POINT",
         equipmentId: point.equipmentId,
         reportedById: input.reportedById,
         reportedByName: input.reportedByName,

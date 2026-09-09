@@ -60,7 +60,7 @@ async function getCounterModule(tx: DbExecutor) {
     )
     .limit(1);
 
-  return module ?? { id: null, name: "Meter Counter", type: "Meter Counter" };
+  return module ?? { id: null, name: "Meter Counter", type: "METER_COUNTER" };
 }
 
 async function createCounterAlertLog(
@@ -318,7 +318,9 @@ export async function createMeterCounterReading(input: MeterCounterReadingInput)
       operationalLogId = await createCounterAlertLog(tx, {
         companyId: input.companyId,
         moduleId: module.id,
-        moduleType: module.name || module.type || "Meter Counter",
+        // See the identical comment in measuring-point.service.ts's alert log creation —
+        // same bug, same fix: the canonical type key, not the display name.
+        moduleType: module.type || module.name || "METER_COUNTER",
         equipmentId: counter.equipmentId,
         reportedById: input.reportedById,
         reportedByName: input.reportedByName,
