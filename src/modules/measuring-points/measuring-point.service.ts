@@ -7,8 +7,6 @@ import {
   logTimelineEvents,
   measuringPointReadings,
   measuringPoints,
-  modules,
-  moduleTypes,
   operationalLogs,
 } from "@/db/schema";
 import type {
@@ -25,6 +23,7 @@ import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { buildPagination } from "@/shared/helpers/pagination";
+import { resolveCanonicalModule } from "@/shared/services/module-lookup.service";
 
 type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "execute">;
 
@@ -76,23 +75,7 @@ function mapPoint(row: {
 }
 
 async function getMeasurementModule(tx: DbExecutor) {
-  const [module] = await tx
-    .select({ id: modules.id, name: modules.name, type: moduleTypes.name })
-    .from(modules)
-    .leftJoin(moduleTypes, eq(modules.moduleTypeId, moduleTypes.id))
-    .where(
-      and(
-        eq(modules.status, "ACTIVE"),
-        sql<boolean>`(
-          lower(${modules.name}) like '%measur%'
-          or lower(${moduleTypes.name}) like '%measur%'
-          or lower(${modules.slug}) like '%measur%'
-        )`,
-      ),
-    )
-    .limit(1);
-
-  return module ?? { id: null, name: "Measurement Point", type: "MEASUREMENT_POINT" };
+  return resolveCanonicalModule(tx, ["measur"], { id: null, name: "Measurement Point", type: "MEASUREMENT_POINT" });
 }
 
 async function createMeasurementAlertLog(
@@ -252,13 +235,10 @@ export async function createMeasuringPointReading(input: MeasuringPointReadingIn
       operationalLogId = await createMeasurementAlertLog(tx, {
         companyId: input.companyId,
         moduleId: module.id,
-        // The canonical type key (moduleTypes.name, e.g. "MEASUREMENT_POINT") — not the
-        // human-readable module name — matching what every other log-creation path and the
-        // Home Feed's module filter both use. Using module.name here was the root cause of
-        // out-of-limit alerts vanishing under the "Measuring Point" feed filter: manually
-        // created logs and the filter pill both compare against this canonical key, but
-        // alert logs were being tagged with the display name ("Measurement Point") instead.
-        moduleType: module.type || module.name || "MEASUREMENT_POINT",
+        // resolveCanonicalModule() already resolves .type to the canonical key — see its
+        // own doc comment for why that (not .name) is what every log-creation path and the
+        // Home Feed's module filter compare moduleType against.
+        moduleType: module.type,
         equipmentId: point.equipmentId,
         reportedById: input.reportedById,
         reportedByName: input.reportedByName,

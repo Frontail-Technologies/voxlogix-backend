@@ -7,8 +7,6 @@ import {
   logTimelineEvents,
   meterCounterReadings,
   meterCounters,
-  modules,
-  moduleTypes,
   operationalLogs,
 } from "@/db/schema";
 import type {
@@ -25,6 +23,7 @@ import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { buildPagination } from "@/shared/helpers/pagination";
+import { resolveCanonicalModule } from "@/shared/services/module-lookup.service";
 
 type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "execute">;
 
@@ -41,26 +40,7 @@ function toNumberPayload(value: string | number | null | undefined) {
 }
 
 async function getCounterModule(tx: DbExecutor) {
-  const [module] = await tx
-    .select({ id: modules.id, name: modules.name, type: moduleTypes.name })
-    .from(modules)
-    .leftJoin(moduleTypes, eq(modules.moduleTypeId, moduleTypes.id))
-    .where(
-      and(
-        eq(modules.status, "ACTIVE"),
-        sql<boolean>`(
-          lower(${modules.name}) like '%meter%'
-          or lower(${modules.name}) like '%counter%'
-          or lower(${moduleTypes.name}) like '%meter%'
-          or lower(${moduleTypes.name}) like '%counter%'
-          or lower(${modules.slug}) like '%meter%'
-          or lower(${modules.slug}) like '%counter%'
-        )`,
-      ),
-    )
-    .limit(1);
-
-  return module ?? { id: null, name: "Meter Counter", type: "METER_COUNTER" };
+  return resolveCanonicalModule(tx, ["meter", "counter"], { id: null, name: "Meter Counter", type: "METER_COUNTER" });
 }
 
 async function createCounterAlertLog(
@@ -318,9 +298,8 @@ export async function createMeterCounterReading(input: MeterCounterReadingInput)
       operationalLogId = await createCounterAlertLog(tx, {
         companyId: input.companyId,
         moduleId: module.id,
-        // See the identical comment in measuring-point.service.ts's alert log creation —
-        // same bug, same fix: the canonical type key, not the display name.
-        moduleType: module.type || module.name || "METER_COUNTER",
+        // resolveCanonicalModule() already resolves .type to the canonical key.
+        moduleType: module.type,
         equipmentId: counter.equipmentId,
         reportedById: input.reportedById,
         reportedByName: input.reportedByName,
