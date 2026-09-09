@@ -1,7 +1,11 @@
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { aiSettings, companyAccessSettings, platformGeneralSettings } from "@/db/schema";
+import {
+  aiSettings,
+  companyAccessSettings,
+  platformGeneralSettings,
+} from "@/db/schema";
 
 export async function ensureCompanyAccessSettings(companyId: string) {
   const [existing] = await db

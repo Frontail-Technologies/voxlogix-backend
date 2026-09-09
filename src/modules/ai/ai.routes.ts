@@ -11,7 +11,6 @@ import {
   patchChatSession,
   postChat,
   postExtractLogFields,
-  postMatchEquipment,
   removeChatSession,
 } from "./ai.controller";
 import {
@@ -19,7 +18,6 @@ import {
   chatSessionIdParamsSchema,
   extractLogFieldsBodySchema,
   listChatSessionsQuerySchema,
-  matchEquipmentBodySchema,
   updateChatSessionBodySchema,
 } from "./ai.validation";
 
@@ -28,7 +26,6 @@ const aiRoles = [USER_ROLES.ADMIN, USER_ROLES.MASTER, USER_ROLES.PLANNER, USER_R
 
 aiRouter.use(requireAuth, requireRole(...aiRoles));
 aiRouter.post("/extract-log-fields", validate({ body: extractLogFieldsBodySchema }), postExtractLogFields);
-aiRouter.post("/match-equipment", validate({ body: matchEquipmentBodySchema }), postMatchEquipment);
 aiRouter.post("/chat", validate({ body: chatBodySchema }), postChat);
 aiRouter.get("/chat/sessions", validate({ query: listChatSessionsQuerySchema }), getChatSessions);
 aiRouter.get("/chat/sessions/:sessionId", validate({ params: chatSessionIdParamsSchema }), getChatSessionDetail);

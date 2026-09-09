@@ -5,7 +5,7 @@ import OpenAI from "openai";
 import { env } from "@/config/env";
 import { db } from "@/db";
 import { aiChatMessages, aiChatSessions, aiSettings, companyAiUsageDaily, equipmentAssets, operationalLogs } from "@/db/schema";
-import type { ChatInput, ExtractedLogFields, ExtractLogFieldsInput, MatchEquipmentInput } from "@/modules/ai/ai.types";
+import type { ChatInput, ExtractedLogFields, ExtractLogFieldsInput } from "@/modules/ai/ai.types";
 import { getModuleFields } from "@/modules/modules/module.service";
 import { listEquipment } from "@/modules/equipment/equipment.service";
 import { AppError } from "@/shared/errors/app-error";
@@ -221,16 +221,37 @@ export async function getChatSession(companyId: string, userId: string, sessionI
 
 type ModuleFieldRow = Awaited<ReturnType<typeof getModuleFields>>[number];
 
+// A module field keyed/labeled as equipment-identifying must never be handed to the model —
+// equipment is a manually selected, authoritative reference now, not something AI extracts,
+// matches, or infers (Parts 6/7). This is defense-in-depth: VoxLogiX's own Equipment Log
+// module currently still has a stray Select-type field literally named "Equipment"
+// (key "equipment", aiExtract=true, no options configured) left over from before manual
+// selection existed — filtering by key here stops it reaching the model regardless of
+// whatever a module's field configuration happens to contain. That stray field definition
+// itself is an admin data-hygiene cleanup (Master Settings > module fields), not something
+// this change silently deletes from the database.
+const EQUIPMENT_FIELD_KEYS = new Set(["equipment", "equipmentid", "equipmentname", "matchedequipment", "equipmentconfidence"]);
+
+function isEquipmentIdentifyingField(field: ModuleFieldRow) {
+  return EQUIPMENT_FIELD_KEYS.has(field.key.toLowerCase());
+}
+
+// Select-type fields are master-data-backed: their final value must be one of a fixed set
+// of existing options (an Issue Category, a Failure Mode, ...), the same way an equipment
+// record is authoritative and not something the model may invent. Previously the extraction
+// schema enum-constrained these AND the prompt said "never leave a field empty" — forcing
+// the model to commit to a specific existing option even when the transcript genuinely
+// didn't make it clear which one, which is exactly the "sometimes doesn't map master-data
+// fields reliably" complaint. The schema below no longer enum-constrains Select fields: the
+// model just extracts the semantic value it heard, in its own words, or an empty string if
+// truly not mentioned. matchToExistingOption() below then deterministically — never by
+// guessing — maps that free text back to one of the field's real options; anything that
+// doesn't clear a confident bar is left blank for the reviewer to pick manually on the
+// Review screen, rather than silently substituting the nearest-sounding wrong option.
 function buildGeminiExtractionSchema(extractableFields: ModuleFieldRow[]) {
-  const properties: Record<string, { type: Type; enum?: string[] }> = {};
+  const properties: Record<string, { type: Type }> = {};
   for (const field of extractableFields) {
-    const property: { type: Type; enum?: string[] } = {
-      type: field.type === "Number" ? Type.NUMBER : Type.STRING,
-    };
-    if (field.type === "Select" && field.options?.length) {
-      property.enum = field.options;
-    }
-    properties[field.key] = property;
+    properties[field.key] = { type: field.type === "Number" ? Type.NUMBER : Type.STRING };
   }
 
   return {
@@ -241,20 +262,17 @@ function buildGeminiExtractionSchema(extractableFields: ModuleFieldRow[]) {
 }
 
 function buildOpenAiExtractionSchema(extractableFields: ModuleFieldRow[]) {
-  const properties: Record<string, { type: string; enum?: string[] }> = {};
+  const properties: Record<string, { type: string }> = {};
   for (const field of extractableFields) {
-    const property: { type: string; enum?: string[] } = {
-      type: field.type === "Number" ? "number" : "string",
-    };
-    if (field.type === "Select" && field.options?.length) {
-      property.enum = field.options;
-    }
-    properties[field.key] = property;
+    properties[field.key] = { type: field.type === "Number" ? "number" : "string" };
   }
 
   return {
     type: "object",
     properties,
+    // OpenAI's strict structured-output mode requires every property to be listed here
+    // regardless of whether it's semantically optional — "may be an empty string" is how
+    // Select fields represent "not confidently mentioned", not omission from this array.
     required: extractableFields.map((field) => field.key),
     additionalProperties: false,
   };
@@ -263,11 +281,62 @@ function buildOpenAiExtractionSchema(extractableFields: ModuleFieldRow[]) {
 function buildFieldDescriptions(extractableFields: ModuleFieldRow[]) {
   return extractableFields
     .map((field) => {
-      const optionsNote = field.options?.length ? ` One of: ${field.options.join(", ")}.` : "";
       const typeNote = field.type === "Number" ? " A number." : field.type === "Date" ? " An ISO date string." : "";
-      return `- "${field.key}" (${field.label}):${typeNote}${optionsNote}`;
+      const selectNote =
+        field.type === "Select" && field.options?.length
+          ? ` This maps to one of an existing set of options (examples: ${field.options.slice(0, 6).join(", ")}). Extract the operator's own words for it — do not force it into one of those exact labels yourself. Use an empty string if it genuinely isn't mentioned or is too unclear to tell.`
+          : "";
+      return `- "${field.key}" (${field.label}):${typeNote}${selectNote}`;
     })
     .join("\n");
+}
+
+function normalizeOptionText(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Deterministic, explainable mapping only — never a probabilistic/fuzzy-library guess.
+// 1. exact match after normalization (case/whitespace-insensitive)
+// 2. a conservative containment match: one string fully contains the other AND the shorter
+//    one is a substantial fraction of the longer one's length, which rules out a short,
+//    generic word trivially "matching" every option that happens to contain it.
+// Anything that clears neither bar returns null — the caller leaves the field unresolved
+// rather than substituting the nearest-sounding option.
+function matchToExistingOption(extractedValue: string, options: string[]): string | null {
+  const normalizedExtracted = normalizeOptionText(extractedValue);
+  if (!normalizedExtracted) return null;
+
+  const exact = options.find((option) => normalizeOptionText(option) === normalizedExtracted);
+  if (exact) return exact;
+
+  let best: { option: string; ratio: number } | null = null;
+  for (const option of options) {
+    const normalizedOption = normalizeOptionText(option);
+    if (!normalizedOption) continue;
+    const contains = normalizedOption.includes(normalizedExtracted) || normalizedExtracted.includes(normalizedOption);
+    if (!contains) continue;
+    const ratio = Math.min(normalizedOption.length, normalizedExtracted.length) / Math.max(normalizedOption.length, normalizedExtracted.length);
+    if (ratio >= 0.7 && (!best || ratio > best.ratio)) {
+      best = { option, ratio };
+    }
+  }
+  return best?.option ?? null;
+}
+
+// Applied once, after the model returns — resolves every Select field's free-text semantic
+// value to one of its real options where confident, and blanks it otherwise so the Review
+// screen's own dropdown is left genuinely unresolved instead of showing a fabricated pick.
+function resolveMasterDataOptions(extracted: ExtractedLogFields, extractableFields: ModuleFieldRow[]): ExtractedLogFields {
+  const resolved: ExtractedLogFields = { ...extracted };
+
+  for (const field of extractableFields) {
+    if (field.type !== "Select" || !field.options?.length) continue;
+    const rawValue = extracted[field.key];
+    const textValue = typeof rawValue === "string" ? rawValue : rawValue == null ? "" : String(rawValue);
+    resolved[field.key] = matchToExistingOption(textValue, field.options) ?? "";
+  }
+
+  return resolved;
 }
 
 async function callGeminiExtract(config: ProviderConfig, transcript: string, systemInstruction: string, extractableFields: ModuleFieldRow[]) {
@@ -350,7 +419,7 @@ export async function extractLogFields(input: ExtractLogFieldsInput): Promise<Ex
   );
 
   const moduleFields = await getModuleFields(input.moduleId);
-  const extractableFields = moduleFields.filter((field) => field.aiExtract);
+  const extractableFields = moduleFields.filter((field) => field.aiExtract && !isEquipmentIdentifyingField(field));
   console.log(`[ai] module fields loaded in ${Date.now() - requestStart}ms, extractable=${extractableFields.length}`);
 
   if (!extractableFields.length) {
@@ -385,8 +454,11 @@ export async function extractLogFields(input: ExtractLogFieldsInput): Promise<Ex
     "You are an industrial maintenance assistant. A field technician has just described an equipment issue by voice.",
     "Extract the following fields from their transcript for a maintenance log:",
     buildFieldDescriptions(extractableFields),
-    "If the transcript does not mention a field, make a reasonable, conservative inference from context; never leave a field empty.",
-    equipmentContext,
+    "For ordinary text/number/date fields: if the transcript does not mention one, make a reasonable, conservative inference from context; never leave those empty.",
+    "For fields that map to an existing set of options: only fill it in when you're actually confident which one is meant, in your own words — leave it as an empty string rather than guessing when it's ambiguous or not mentioned. A human reviews and can pick it manually afterward.",
+    equipmentContext
+      ? `${equipmentContext} Do not identify, guess, or change the equipment — it was already selected by the operator before recording. Extract only the operational details listed above.`
+      : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -401,7 +473,7 @@ export async function extractLogFields(input: ExtractLogFieldsInput): Promise<Ex
       const parsed = await callExtract(config, input.transcript, systemInstruction, extractableFields);
       console.log(`[ai] ${providerLabel} succeeded in ${Date.now() - attemptStart}ms (total ${Date.now() - requestStart}ms)`);
       void recordUsage(input.companyId, { aiLogs: 1 });
-      return parsed;
+      return resolveMasterDataOptions(parsed, extractableFields);
     } catch (error) {
       lastError = error;
       console.error(
@@ -711,9 +783,4 @@ export async function deleteChatSession(companyId: string, userId: string, sessi
   // aiChatMessages cascade-deletes via its sessionId FK — no manual message cleanup needed.
   await db.delete(aiChatSessions).where(eq(aiChatSessions.id, sessionId));
   return { id: sessionId };
-}
-
-export async function matchEquipmentFromTranscript(input: MatchEquipmentInput) {
-  const { single } = await resolveEquipmentMention(input.companyId, input.transcript);
-  return { equipment: single };
 }

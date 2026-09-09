@@ -6,7 +6,6 @@ import {
   extractLogFields,
   getChatSession,
   listChatSessions,
-  matchEquipmentFromTranscript,
   updateChatSessionTitle,
 } from "@/modules/ai/ai.service";
 import { sendSuccess } from "@/shared/helpers/api-response";
@@ -48,11 +47,6 @@ export const getChatSessions = asyncHandler(async (request: Request, response: R
 export const getChatSessionDetail = asyncHandler(async (request: Request, response: Response) => {
   const session = await getChatSession(companyIdOf(request), userIdOf(request), paramOf(request, "sessionId"));
   return sendSuccess(response, { data: session });
-});
-
-export const postMatchEquipment = asyncHandler(async (request: Request, response: Response) => {
-  const result = await matchEquipmentFromTranscript({ companyId: companyIdOf(request), ...request.body });
-  return sendSuccess(response, { data: result });
 });
 
 export const patchChatSession = asyncHandler(async (request: Request, response: Response) => {
