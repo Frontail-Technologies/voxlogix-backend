@@ -1,4 +1,4 @@
-﻿import { Router } from "express";
+import { Router } from "express";
 
 import { parseMultipartPayload } from "@/middlewares/multipart-payload.middleware";
 import { requireAuth } from "@/middlewares/auth-placeholder.middleware";
@@ -11,6 +11,7 @@ import {
   getCompanyAccess,
   getCompanies,
   getCompany,
+  getMyCompany,
   getCompanyOptions,
   patchCompany,
   patchCompanyAccess,
@@ -26,6 +27,13 @@ import {
 } from "./company.validation";
 
 const companiesRouter = Router();
+
+// The caller's OWN company only (identity shown on the admin Settings page and used in
+// report headers) — resolved from the authenticated session, never from a client-supplied
+// id, so it can't be used to read another tenant. Registered before the MASTER-only lock
+// below, which still guards every cross-company route.
+companiesRouter.get("/me", requireAuth, getMyCompany);
+
 // Cross-company tenant administration (create/edit/delete ANY company, view
 // or change its feature-access flags) — only used by the master-companies
 // frontend feature. Was previously fully unauthenticated; see security audit.
