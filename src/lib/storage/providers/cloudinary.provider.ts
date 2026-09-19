@@ -72,7 +72,11 @@ export class CloudinaryStorageProvider implements StorageProvider {
       input.context,
     ]);
     const fileName = sanitizeFileName(input.fileName ?? input.originalName);
-    const publicId = fileName.replace(/\.[^.]+$/, "");
+    // Cloudinary "raw" assets (PDFs/documents) are delivered at exactly their public_id, with
+    // no format appended — strip the extension here and the download URL ends extension-less
+    // (browsers then save "manual" instead of "manual.pdf"). Images/video get their extension
+    // from the delivery format, so only raw uploads keep it in the public_id.
+    const publicId = input.resourceType === "raw" ? fileName : fileName.replace(/\.[^.]+$/, "");
 
     return new Promise<UploadAssetResult>((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
