@@ -205,7 +205,7 @@ export async function listEquipmentManuals(input: ListEquipmentManualsInput) {
   return { items: rows, pagination };
 }
 
-export async function getEquipmentManual(companyId: string, manualId: string) {
+export async function getEquipmentManual(companyId: string, manualId: string, options: { extractIfPending?: boolean } = {}) {
   const [manual] = await db
     .select({ id: equipmentManuals.id, equipmentId: equipmentManuals.equipmentId, title: equipmentManuals.title, fileUrl: equipmentManuals.fileUrl, fileKey: equipmentManuals.fileKey, fileName: equipmentManuals.fileName, mimeType: equipmentManuals.mimeType, fileSize: equipmentManuals.fileSize, status: equipmentManuals.status, extractedText: equipmentManuals.extractedText, createdAt: equipmentManuals.createdAt, updatedAt: equipmentManuals.updatedAt, equipment: { id: equipmentAssets.id, equipmentCode: equipmentAssets.equipmentCode, name: equipmentAssets.name } })
     .from(equipmentManuals)
@@ -213,12 +213,15 @@ export async function getEquipmentManual(companyId: string, manualId: string) {
     .where(and(eq(equipmentManuals.id, manualId), eq(equipmentManuals.companyId, companyId)))
     .limit(1);
   if (!manual) throw new AppError({ message: "Equipment manual not found.", statusCode: HTTP_STATUS.NOT_FOUND, errorCode: ERROR_CODES.NOT_FOUND });
-  const manualText = await ensureManualContextExtracted({ companyId, equipmentId: manual.equipmentId, manualId: manual.id, manualUrl: manual.fileUrl ?? "", mimeType: manual.mimeType, status: manual.status, extractedText: manual.extractedText });
+  // Right after an upload the file is still queued for background extraction — the upload
+  // response must not block on it (extractIfPending: false), while a later detail read still
+  // completes any pending extraction on demand.
+  const manualText = options.extractIfPending === false ? null : await ensureManualContextExtracted({ companyId, equipmentId: manual.equipmentId, manualId: manual.id, manualUrl: manual.fileUrl ?? "", mimeType: manual.mimeType, status: manual.status, extractedText: manual.extractedText });
   if (manualText) {
     manual.status = "READY";
     manual.extractedText = manualText;
     manual.updatedAt = new Date();
-  } else if (manual.status === "PROCESSING" && manual.fileUrl) {
+  } else if (options.extractIfPending !== false && manual.status === "PROCESSING" && manual.fileUrl) {
     manual.status = "FAILED";
     manual.updatedAt = new Date();
   }
@@ -228,8 +231,12 @@ export async function getEquipmentManual(companyId: string, manualId: string) {
 export async function createEquipmentManual(input: CreateEquipmentManualInput, asset?: UploadAssetResult | null, sourceFile?: ManualSourceFile) {
   await ensureEquipment(input.companyId, input.equipmentId);
   const submittedManualText = normalizeManualText(input.manualText);
-  const extractedManualText = submittedManualText ?? (await extractManualTextFromSource(sourceFile));
   const fileUrl = sourceUrlFrom({ manualUrl: input.manualUrl, asset });
+  // A stored file is text-extracted in the BACKGROUND (queueManualContextExtraction below,
+  // status PROCESSING -> READY) so the upload request returns as soon as the file is saved —
+  // parsing a several-hundred-page PDF inline made big uploads slow enough to time out or be
+  // dropped by a proxy. Only when there is no stored file to extract from later is it read here.
+  const extractedManualText = submittedManualText ?? (fileUrl ? null : await extractManualTextFromSource(sourceFile));
   if (!fileUrl && !extractedManualText) throw new AppError({ message: "Add a manual file, manual URL, or manual context text.", statusCode: HTTP_STATUS.BAD_REQUEST, errorCode: ERROR_CODES.VALIDATION_ERROR });
   const fileName = manualFileNameFrom(asset);
   const mimeType = asset?.mimeType ?? sourceFile?.mimeType ?? null;
@@ -237,7 +244,7 @@ export async function createEquipmentManual(input: CreateEquipmentManualInput, a
   await replaceManualChunks({ companyId: input.companyId, equipmentId: input.equipmentId, manualId: created.id, manualText: extractedManualText });
   await syncEquipmentManualContext({ companyId: input.companyId, equipmentId: input.equipmentId, manualUrl: fileUrl, manualText: extractedManualText });
   if (!extractedManualText && fileUrl) queueManualContextExtraction({ companyId: input.companyId, equipmentId: input.equipmentId, manualId: created.id, manualUrl: fileUrl, mimeType });
-  return getEquipmentManual(input.companyId, created.id);
+  return getEquipmentManual(input.companyId, created.id, { extractIfPending: false });
 }
 
 export async function updateEquipmentManual(companyId: string, manualId: string, input: UpdateEquipmentManualInput, asset?: UploadAssetResult | null, sourceFile?: ManualSourceFile) {
@@ -245,16 +252,19 @@ export async function updateEquipmentManual(companyId: string, manualId: string,
   const equipmentId = input.equipmentId ?? existing.equipmentId;
   await ensureEquipment(companyId, equipmentId);
   const submittedManualText = input.manualText === undefined ? undefined : normalizeManualText(input.manualText);
-  const extractedFromFile = submittedManualText === undefined ? await extractManualTextFromSource(sourceFile) : null;
-  const manualText = submittedManualText !== undefined ? submittedManualText : extractedFromFile ?? existing.extractedText;
   const fileUrl = sourceUrlFrom({ manualUrl: input.manualUrl === undefined ? existing.fileUrl : input.manualUrl, asset });
+  // A newly uploaded PDF replaces the old text and is re-extracted in the background (see
+  // createEquipmentManual) instead of blocking this request; other files keep the old text.
+  const replacesWithPdf = submittedManualText === undefined && Boolean(sourceFile) && isPdfSource(sourceFile!.mimeType, sourceFile!.originalName);
+  const extractedFromFile = submittedManualText === undefined && !replacesWithPdf && !fileUrl ? await extractManualTextFromSource(sourceFile) : null;
+  const manualText = submittedManualText !== undefined ? submittedManualText : replacesWithPdf ? null : extractedFromFile ?? existing.extractedText;
   if (!fileUrl && !manualText) throw new AppError({ message: "Add a manual file, manual URL, or manual context text.", statusCode: HTTP_STATUS.BAD_REQUEST, errorCode: ERROR_CODES.VALIDATION_ERROR });
   const mimeType = asset?.mimeType ?? sourceFile?.mimeType ?? existing.mimeType;
   await db.update(equipmentManuals).set({ ...(input.equipmentId !== undefined ? { equipmentId } : {}), ...(input.title !== undefined ? { title: sanitizeString(input.title) } : {}), fileUrl, ...(asset ? { fileKey: asset.key, fileName: manualFileNameFrom(asset), mimeType, fileSize: asset.bytes } : {}), ...(input.status !== undefined ? { status: input.status } : manualText ? { status: "READY" } : { status: "PROCESSING" }), extractedText: manualText, updatedAt: new Date() }).where(and(eq(equipmentManuals.id, manualId), eq(equipmentManuals.companyId, companyId)));
   await replaceManualChunks({ companyId, equipmentId, manualId, manualText });
   await syncEquipmentManualContext({ companyId, equipmentId, manualUrl: fileUrl, manualText });
   if (!manualText && fileUrl) queueManualContextExtraction({ companyId, equipmentId, manualId, manualUrl: fileUrl, mimeType });
-  return getEquipmentManual(companyId, manualId);
+  return getEquipmentManual(companyId, manualId, { extractIfPending: false });
 }
 
 export async function deleteEquipmentManual(companyId: string, manualId: string) {
