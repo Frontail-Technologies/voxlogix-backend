@@ -6,6 +6,9 @@ import { kaizenCategories, measuringPointReadings, measuringPoints, meterCounter
 import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
+import {
+  getMeterCounterDeviationConfigError,
+} from "@/shared/domain/meter-counter-configuration";
 import { buildPagination } from "@/shared/helpers/pagination";
 
 /** Numeric columns are Postgres `numeric`, which drizzle expects as strings.
@@ -148,8 +151,42 @@ export async function updateMeterCounter(
   id: string,
   input: { initialReading?: number | null; resetValue?: number | null; expectedDailyConsumption?: number | null; alertDeviationPct?: number | null } & Partial<typeof meterCounters.$inferInsert>,
 ) {
-  await ensureRow(meterCounters, meterCounters.id, meterCounters.companyId, companyId, id, "Meter counter not found.");
+  const [existing] = await db
+    .select({
+      expectedDailyConsumption: meterCounters.expectedDailyConsumption,
+      alertDeviationPct: meterCounters.alertDeviationPct,
+    })
+    .from(meterCounters)
+    .where(and(eq(meterCounters.id, id), eq(meterCounters.companyId, companyId)))
+    .limit(1);
+  if (!existing) {
+    throw new AppError({
+      message: "Meter counter not found.",
+      statusCode: HTTP_STATUS.NOT_FOUND,
+      errorCode: ERROR_CODES.NOT_FOUND,
+    });
+  }
+
   const { initialReading, resetValue, expectedDailyConsumption, alertDeviationPct, ...rest } = input;
+  const nextExpectedDailyConsumption = expectedDailyConsumption === undefined
+    ? existing.expectedDailyConsumption
+    : expectedDailyConsumption;
+  const nextAlertDeviationPct = alertDeviationPct === undefined
+    ? existing.alertDeviationPct
+    : alertDeviationPct;
+
+  const configurationError = getMeterCounterDeviationConfigError(
+    nextExpectedDailyConsumption,
+    nextAlertDeviationPct,
+  );
+  if (configurationError) {
+    throw new AppError({
+      message: configurationError,
+      statusCode: HTTP_STATUS.BAD_REQUEST,
+      errorCode: ERROR_CODES.VALIDATION_ERROR,
+    });
+  }
+
   await db
     .update(meterCounters)
     .set({

@@ -1,3 +1,7 @@
+import {
+  getMeterCounterDeviationConfigError,
+} from "@/shared/domain/meter-counter-configuration";
+
 export type MeasurementStatus = "NORMAL" | "OUT_OF_LIMIT";
 export type CounterReadingStatus = "NORMAL" | "HIGH_DEVIATION";
 
@@ -71,6 +75,12 @@ export function evaluateMeasurement(input: {
 }
 
 export function evaluateCounterReading(input: CounterEvaluationInput): CounterEvaluation {
+  const configurationError = getMeterCounterDeviationConfigError(
+    input.expectedDailyConsumption,
+    input.alertDeviationPct,
+  );
+  if (configurationError) throw new Error(configurationError);
+
   if (input.previousReading === null || input.previousReadingAt === null) {
     return {
       counterStatus: "NORMAL",
@@ -98,8 +108,9 @@ export function evaluateCounterReading(input: CounterEvaluationInput): CounterEv
     0,
     (input.currentReadingAt.getTime() - input.previousReadingAt.getTime()) / 86_400_000,
   );
+  const hasDeviationConfig = input.expectedDailyConsumption !== null;
   const expectedConsumptionForPeriod =
-    input.expectedDailyConsumption === null ? null : input.expectedDailyConsumption * elapsedDays;
+    hasDeviationConfig ? input.expectedDailyConsumption! * elapsedDays : null;
   const deviation =
     expectedConsumptionForPeriod === null ? null : consumptionDelta - expectedConsumptionForPeriod;
   const deviationPercent =
@@ -108,8 +119,7 @@ export function evaluateCounterReading(input: CounterEvaluationInput): CounterEv
       : (deviation / expectedConsumptionForPeriod) * 100;
   const isAlert =
     deviationPercent !== null &&
-    input.alertDeviationPct !== null &&
-    Math.abs(deviationPercent) > input.alertDeviationPct;
+    deviationPercent > input.alertDeviationPct!;
 
   return {
     counterStatus: isAlert ? "HIGH_DEVIATION" : "NORMAL",

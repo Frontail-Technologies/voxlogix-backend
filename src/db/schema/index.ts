@@ -38,6 +38,8 @@ import {
   locations,
   logAttachments,
   logTimelineEvents,
+  scheduledAssignments,
+  inAppNotifications,
   operationalLogs,
 } from "@/db/schema/operational.schema";
 import { aiChatMessages, aiChatSessions } from "@/db/schema/ai.schema";
@@ -76,6 +78,8 @@ export const schema = {
   operationalLogs,
   logAttachments,
   logTimelineEvents,
+  scheduledAssignments,
+  inAppNotifications,
   aiChatSessions,
   aiChatMessages,
 };

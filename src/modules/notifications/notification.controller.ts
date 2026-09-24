@@ -1,29 +1,41 @@
 import type { Request, Response } from "express";
 
+import { getUnreadNotificationCount, listNotifications, markAllNotificationsRead, markNotificationRead, sendAdminNotification } from "@/modules/notifications/notification.service";
 import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
 
-import { listNotifications } from "./notification.service";
-
-export const getNotifications = asyncHandler(async (request: Request, response: Response) => {
+function identity(request: Request) {
   const companyId = request.user?.companyId;
   const userId = request.user?.id;
+  if (!companyId || !userId) throw new AppError({ message: "No company associated with this account.", statusCode: HTTP_STATUS.FORBIDDEN, errorCode: ERROR_CODES.FORBIDDEN });
+  return { companyId, userId };
+}
 
-  if (!companyId || !userId) {
-    throw new AppError({
-      message: "No company associated with this account.",
-      statusCode: HTTP_STATUS.FORBIDDEN,
-      errorCode: ERROR_CODES.FORBIDDEN,
-    });
-  }
-
+export const getNotifications = asyncHandler(async (request: Request, response: Response) => {
+  const { companyId, userId } = identity(request);
   const rawLimit = typeof request.query.limit === "string" ? Number(request.query.limit) : undefined;
-  const limit = Number.isFinite(rawLimit) ? rawLimit : undefined;
+  return sendSuccess(response, { data: await listNotifications(companyId, userId, Number.isFinite(rawLimit) ? rawLimit : undefined) });
+});
 
-  const notifications = await listNotifications(companyId, userId, limit);
+export const getUnreadCount = asyncHandler(async (request: Request, response: Response) => {
+  const { companyId, userId } = identity(request);
+  return sendSuccess(response, { data: { count: await getUnreadNotificationCount(companyId, userId) } });
+});
 
-  return sendSuccess(response, { data: notifications });
+export const patchNotificationRead = asyncHandler(async (request: Request, response: Response) => {
+  const { companyId, userId } = identity(request);
+  return sendSuccess(response, { data: await markNotificationRead(companyId, userId, String(request.params.notificationId)) });
+});
+
+export const patchAllNotificationsRead = asyncHandler(async (request: Request, response: Response) => {
+  const { companyId, userId } = identity(request);
+  return sendSuccess(response, { data: await markAllNotificationsRead(companyId, userId) });
+});
+
+export const postAdminNotification = asyncHandler(async (request: Request, response: Response) => {
+  const { companyId, userId } = identity(request);
+  return sendSuccess(response, { statusCode: HTTP_STATUS.CREATED, data: await sendAdminNotification(companyId, userId, request.body) });
 });

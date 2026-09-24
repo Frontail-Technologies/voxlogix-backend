@@ -351,7 +351,8 @@ export async function updateLog(companyId: string, logId: string, input: UpdateL
 }
 
 export async function updateLogStatus(companyId: string, logId: string, input: UpdateLogStatusInput) {
-  await ensureLog(companyId, logId);
+  const current = await getLog(companyId, logId);
+  if (current.status === input.status) return current;
   await db
     .update(operationalLogs)
     .set({ status: input.status, updatedAt: new Date() })

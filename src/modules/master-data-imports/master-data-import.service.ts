@@ -25,6 +25,9 @@ import type {
   SheetImportSummary,
 } from "@/modules/master-data-imports/master-data-import.types";
 import { USER_ROLES, USER_STATUS } from "@/shared/constants";
+import {
+  getMeterCounterDeviationConfigError,
+} from "@/shared/domain/meter-counter-configuration";
 import { sanitizeNullableString, sanitizeString } from "@/shared/helpers/sanitize";
 import { hashPassword } from "@/shared/security/password";
 
@@ -591,6 +594,20 @@ async function importMeterCounters(companyId: string, rows: Row[], result: Sheet
       result.errors.push(`Meter counter ${counterCode}: equipment ${equipmentCode} was not found; imported without equipment link.`);
     }
 
+    const expectedDailyConsumptionRaw = value(row, "EXPECTED DAILY CONSUMPTION");
+    const alertDeviationPctRaw = value(row, "ALERT DEVIATION PCT");
+    const configurationError = getMeterCounterDeviationConfigError(
+      expectedDailyConsumptionRaw,
+      alertDeviationPctRaw,
+    );
+    if (configurationError) {
+      result.skipped += 1;
+      result.errors.push(`Meter counter ${counterCode}: ${configurationError}`);
+      continue;
+    }
+    const expectedDailyConsumption = numberValue(row, "EXPECTED DAILY CONSUMPTION");
+    const alertDeviationPct = numberValue(row, "ALERT DEVIATION PCT");
+
     const [existing] = await db
       .select({ id: meterCounters.id })
       .from(meterCounters)
@@ -611,8 +628,8 @@ async function importMeterCounters(companyId: string, rows: Row[], result: Sheet
         readingFrequency: optionalValue(row, "READING FREQUENCY"),
         initialReading: numberValue(row, "INITIAL READING"),
         resetValue: numberValue(row, "RESET VALUE"),
-        expectedDailyConsumption: numberValue(row, "EXPECTED DAILY CONSUMPTION"),
-        alertDeviationPct: numberValue(row, "ALERT DEVIATION PCT"),
+        expectedDailyConsumption,
+        alertDeviationPct,
         notes: optionalValue(row, "NOTES"),
         status: "ACTIVE",
         updatedAt: new Date(),
@@ -629,8 +646,8 @@ async function importMeterCounters(companyId: string, rows: Row[], result: Sheet
           readingFrequency: optionalValue(row, "READING FREQUENCY"),
           initialReading: numberValue(row, "INITIAL READING"),
           resetValue: numberValue(row, "RESET VALUE"),
-          expectedDailyConsumption: numberValue(row, "EXPECTED DAILY CONSUMPTION"),
-          alertDeviationPct: numberValue(row, "ALERT DEVIATION PCT"),
+          expectedDailyConsumption,
+          alertDeviationPct,
           notes: optionalValue(row, "NOTES"),
           status: "ACTIVE",
           updatedAt: new Date(),
@@ -872,13 +889,33 @@ async function previewMeterCountersRows(companyId: string, rows: Row[]): Promise
     }
     if (!value(row, "COUNTER NAME")) errors.push(requiredError("COUNTER NAME", "Counter Name"));
 
+    const expectedDailyConsumption = value(row, "EXPECTED DAILY CONSUMPTION");
+    const alertDeviationPct = value(row, "ALERT DEVIATION PCT");
+    const configurationError = getMeterCounterDeviationConfigError(
+      expectedDailyConsumption,
+      alertDeviationPct,
+    );
+    if (configurationError) {
+      errors.push({
+        field: "EXPECTED DAILY CONSUMPTION / ALERT DEVIATION PCT",
+        code: "INVALID_FORMAT",
+        message: configurationError,
+      });
+    }
+
     const equipmentCode = value(row, "EQUIPMENT ID");
     if (equipmentCode && !equipmentMap.get(equipmentCode.toLowerCase())) {
       errors.push({ field: "EQUIPMENT ID", code: "UNKNOWN_REFERENCE", message: `Equipment ${equipmentCode} was not found — will import without an equipment link.` });
     }
 
     const row_ = makePreviewRow(index, row, errors);
-    row_.status = !value(row, "COUNTER ID") || !value(row, "COUNTER NAME") || duplicates.has(index) ? "rejected" : "accepted";
+    row_.status =
+      !value(row, "COUNTER ID") ||
+      !value(row, "COUNTER NAME") ||
+      duplicates.has(index) ||
+      Boolean(configurationError)
+        ? "rejected"
+        : "accepted";
     return row_;
   });
 }

@@ -13,6 +13,11 @@ export const importedMasterDataIdParamsSchema = z.object({ id: z.string().uuid()
 // reactivated — there's no separate reactivate endpoint.
 const recordStatusField = z.enum(["ACTIVE", "INACTIVE"]).optional();
 
+const optionalNullableNumber = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? null : value),
+  z.coerce.number().finite().optional().nullable(),
+);
+
 export const safetyReportingBodySchema = z.object({
   status: recordStatusField,
   safetyCategoryCode: z.string().trim().max(80).optional(),
@@ -56,8 +61,8 @@ export const meterCounterBodySchema = z.object({
   readingFrequency: z.string().trim().max(120).optional(),
   initialReading: z.coerce.number().finite().optional().nullable(),
   resetValue: z.coerce.number().finite().optional().nullable(),
-  expectedDailyConsumption: z.coerce.number().finite().optional().nullable(),
-  alertDeviationPct: z.coerce.number().finite().optional().nullable(),
+  expectedDailyConsumption: optionalNullableNumber,
+  alertDeviationPct: optionalNullableNumber,
   notes: z.string().trim().max(2000).optional(),
 });
 export const updateMeterCounterBodySchema = meterCounterBodySchema

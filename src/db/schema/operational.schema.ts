@@ -470,6 +470,50 @@ export const logTimelineEvents = pgTable(
   }),
 );
 
+export const scheduledAssignments = pgTable(
+  "scheduled_assignments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 180 }).notNull(),
+    description: text("description"),
+    assignedToUserId: uuid("assigned_to_user_id").notNull().references(() => admins.id, { onDelete: "restrict" }),
+    assignedByUserId: uuid("assigned_by_user_id").notNull().references(() => admins.id, { onDelete: "restrict" }),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    status: varchar("status", { length: 40 }).notNull().default("SCHEDULED"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    companyIndex: index("scheduled_assignments_company_id_idx").on(table.companyId),
+    assigneeScheduleIndex: index("scheduled_assignments_assignee_schedule_idx").on(table.assignedToUserId, table.scheduledAt),
+    companyStatusIndex: index("scheduled_assignments_company_status_idx").on(table.companyId, table.status),
+  }),
+);
+
+export const inAppNotifications = pgTable(
+  "in_app_notifications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    recipientUserId: uuid("recipient_user_id").notNull().references(() => admins.id, { onDelete: "cascade" }),
+    createdByUserId: uuid("created_by_user_id").references(() => admins.id, { onDelete: "set null" }),
+    type: varchar("type", { length: 60 }).notNull(),
+    title: varchar("title", { length: 180 }).notNull(),
+    message: text("message").notNull(),
+    relatedEntityType: varchar("related_entity_type", { length: 80 }),
+    relatedEntityId: uuid("related_entity_id"),
+    relatedRoute: varchar("related_route", { length: 500 }),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    companyIndex: index("in_app_notifications_company_id_idx").on(table.companyId),
+    recipientCreatedIndex: index("in_app_notifications_recipient_created_idx").on(table.recipientUserId, table.createdAt),
+    recipientReadIndex: index("in_app_notifications_recipient_read_idx").on(table.recipientUserId, table.readAt),
+  }),
+);
+
 export const locationsRelations = relations(locations, ({ one, many }) => ({
   company: one(companies, { fields: [locations.companyId], references: [companies.id] }),
   equipment: many(equipmentAssets),
