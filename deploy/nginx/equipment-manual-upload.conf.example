@@ -1,0 +1,19 @@
+# Include these locations in the api.voxlogix.in server block before the
+# general /api proxy location. The application still enforces a 10 MB PDF
+# limit; 12m only leaves room for multipart field and boundary overhead.
+# Replace the proxy_pass target with the same upstream used by the existing
+# /api location if it differs on the host.
+
+location = /api/equipment-manuals {
+    client_max_body_size 12m;
+    proxy_read_timeout 180s;
+    proxy_send_timeout 180s;
+    proxy_pass http://127.0.0.1:5000;
+}
+
+location ~ ^/api/equipment-manuals/[0-9a-fA-F-]+$ {
+    client_max_body_size 12m;
+    proxy_read_timeout 180s;
+    proxy_send_timeout 180s;
+    proxy_pass http://127.0.0.1:5000;
+}

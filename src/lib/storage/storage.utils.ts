@@ -21,10 +21,6 @@ export function buildAssetKey(parts: Array<string | undefined>) {
     .map((part) =>
       String(part)
         .replace(/^\/+|\/+$/g, "")
-        // Object keys are opaque strings to S3/Cloudinary (not resolved
-        // through a real filesystem), so this isn't an actual traversal
-        // escape — stripped anyway so a caller-supplied folder/context value
-        // can never produce a confusing "../.."-bearing key.
         .split("/")
         .filter((segment) => segment !== "." && segment !== "..")
         .join("/"),

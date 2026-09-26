@@ -7,7 +7,13 @@ import {
   listEquipmentManuals,
   updateEquipmentManual,
 } from "@/modules/equipment-manuals/equipment-manual.service";
-import { uploadDocumentAsset } from "@/modules/uploads/uploads.service";
+import {
+  deleteStorageAssetByKey,
+  uploadDocumentAsset,
+} from "@/modules/uploads/uploads.service";
+import type { UploadAssetResult } from "@/lib/storage/storage.types";
+import { AppError } from "@/shared/errors/app-error";
+import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
@@ -46,11 +52,30 @@ async function manualAssetFromRequest(request: Request, fallbackName: string) {
     return null;
   }
 
-  return uploadDocumentAsset(request.file, {
-    folder: "equipment-manuals",
-    context: "equipment-manual",
-    fileName: documentUploadFileName(request, fallbackName),
-  });
+  try {
+    return await uploadDocumentAsset(request.file, {
+      folder: "equipment-manuals",
+      context: "equipment-manual",
+      fileName: documentUploadFileName(request, fallbackName),
+    });
+  } catch (error) {
+    console.error("[equipment manual storage upload failed]", error);
+    throw new AppError({
+      message: "Storage unavailable. Please try again.",
+      statusCode: HTTP_STATUS.SERVICE_UNAVAILABLE,
+      errorCode: ERROR_CODES.INTERNAL_SERVER_ERROR,
+    });
+  }
+}
+
+async function removeUncommittedAsset(asset: UploadAssetResult | null) {
+  if (!asset?.key) return;
+
+  try {
+    await deleteStorageAssetByKey(asset.key);
+  } catch (error) {
+    console.error("[equipment manual upload cleanup failed]", error);
+  }
 }
 
 export const getEquipmentManualsList = asyncHandler(async (request: Request, response: Response) => {
@@ -74,11 +99,18 @@ export const getEquipmentManualDetail = asyncHandler(async (request: Request, re
 
 export const postEquipmentManual = asyncHandler(async (request: Request, response: Response) => {
   const asset = await manualAssetFromRequest(request, request.body.title ?? "equipment-manual");
-  const manual = await createEquipmentManual({
-    companyId: companyIdOf(request),
-    createdById: request.user?.id,
-    ...request.body,
-  }, asset, manualSourceFileFromRequest(request));
+  let manual;
+
+  try {
+    manual = await createEquipmentManual({
+      companyId: companyIdOf(request),
+      createdById: request.user?.id,
+      ...request.body,
+    }, asset, manualSourceFileFromRequest(request));
+  } catch (error) {
+    await removeUncommittedAsset(asset);
+    throw error;
+  }
 
   return sendSuccess(response, { statusCode: HTTP_STATUS.CREATED, data: manual });
 });
@@ -86,9 +118,14 @@ export const postEquipmentManual = asyncHandler(async (request: Request, respons
 export const patchEquipmentManual = asyncHandler(async (request: Request, response: Response) => {
   const asset = await manualAssetFromRequest(request, request.body.title ?? paramOf(request, "manualId"));
 
-  return sendSuccess(response, {
-    data: await updateEquipmentManual(companyIdOf(request), paramOf(request, "manualId"), request.body, asset, manualSourceFileFromRequest(request)),
-  });
+  try {
+    return sendSuccess(response, {
+      data: await updateEquipmentManual(companyIdOf(request), paramOf(request, "manualId"), request.body, asset, manualSourceFileFromRequest(request)),
+    });
+  } catch (error) {
+    await removeUncommittedAsset(asset);
+    throw error;
+  }
 });
 
 export const removeEquipmentManual = asyncHandler(async (request: Request, response: Response) => {

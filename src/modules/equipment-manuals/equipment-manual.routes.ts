@@ -4,7 +4,7 @@ import { requireAuth } from "@/middlewares/auth-placeholder.middleware";
 import { parseMultipartPayload } from "@/middlewares/multipart-payload.middleware";
 import { requireRole } from "@/middlewares/role-placeholder.middleware";
 import { validate } from "@/middlewares/validate.middleware";
-import { singleDocumentUploadMiddleware } from "@/modules/uploads/uploads.middleware";
+import { singleManualUploadMiddleware } from "@/modules/uploads/uploads.middleware";
 import { USER_ROLES } from "@/shared/constants";
 
 import {
@@ -29,14 +29,14 @@ equipmentManualsRouter.get("/", validate({ query: listEquipmentManualsQuerySchem
 equipmentManualsRouter.get("/:manualId", validate({ params: equipmentManualIdParamsSchema }), getEquipmentManualDetail);
 equipmentManualsRouter.post(
   "/",
-  singleDocumentUploadMiddleware,
+  singleManualUploadMiddleware,
   parseMultipartPayload,
   validate({ body: equipmentManualBodySchema }),
   postEquipmentManual,
 );
 equipmentManualsRouter.patch(
   "/:manualId",
-  singleDocumentUploadMiddleware,
+  singleManualUploadMiddleware,
   parseMultipartPayload,
   validate({ params: equipmentManualIdParamsSchema, body: updateEquipmentManualBodySchema }),
   patchEquipmentManual,

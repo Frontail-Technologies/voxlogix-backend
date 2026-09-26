@@ -164,7 +164,7 @@ export async function listMeterCounterLookup(input: MeterCounterLookupInput) {
     WHERE ${meterCounterReadings.counterId} = ${meterCounters.id}
     ORDER BY ${meterCounterReadings.reportedAt} DESC
     LIMIT 1
-  )`;
+  )`.mapWith(meterCounterReadings.reportedAt);
   const where = and(...filters);
   const [{ totalItems }] = await db
     .select({ totalItems: count() })
