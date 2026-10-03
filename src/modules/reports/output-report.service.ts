@@ -364,7 +364,12 @@ export async function getMeasuringPointReportRows(companyId: string, range: Repo
     .from(measuringPointReadings)
     .leftJoin(equipmentAssets, eq(measuringPointReadings.equipmentId, equipmentAssets.id))
     .leftJoin(admins, eq(measuringPointReadings.reportedById, admins.id))
-    .where(and(eq(measuringPointReadings.companyId, companyId), gte(measuringPointReadings.reportedAt, range.from), lte(measuringPointReadings.reportedAt, range.to)))
+    .where(and(
+      eq(measuringPointReadings.companyId, companyId),
+      eq(measuringPointReadings.status, "VALID"),
+      gte(measuringPointReadings.reportedAt, range.from),
+      lte(measuringPointReadings.reportedAt, range.to),
+    ))
     .orderBy(asc(measuringPointReadings.reportedAt), asc(measuringPointReadings.reportLogId));
 
   return rows.map((row) => ({
@@ -412,7 +417,12 @@ export async function getMeterCounterReportRows(companyId: string, range: Report
     })
     .from(meterCounterReadings)
     .leftJoin(admins, eq(meterCounterReadings.reportedById, admins.id))
-    .where(and(eq(meterCounterReadings.companyId, companyId), gte(meterCounterReadings.reportedAt, range.from), lte(meterCounterReadings.reportedAt, range.to)))
+    .where(and(
+      eq(meterCounterReadings.companyId, companyId),
+      eq(meterCounterReadings.status, "VALID"),
+      gte(meterCounterReadings.reportedAt, range.from),
+      lte(meterCounterReadings.reportedAt, range.to),
+    ))
     .orderBy(asc(meterCounterReadings.reportedAt), asc(meterCounterReadings.reportLogId));
 
   return rows.map((row) => ({

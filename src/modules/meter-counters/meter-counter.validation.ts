@@ -11,6 +11,14 @@ export const meterCounterIdParamsSchema = z.object({
   counterId: z.string().uuid(),
 });
 
+export const meterCounterReadingIdParamsSchema = meterCounterIdParamsSchema.extend({
+  readingId: z.string().uuid(),
+});
+
 export const meterCounterReadingBodySchema = z.object({
   currentReading: z.number().finite(),
+});
+
+export const invalidateMeterCounterReadingBodySchema = z.object({
+  reason: z.string().trim().min(1, "Reason is required.").max(500, "Reason must be 500 characters or fewer."),
 });

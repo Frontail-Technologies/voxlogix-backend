@@ -1,36 +1,34 @@
-import nodemailer from "nodemailer";
+import { Resend } from "resend";
 
 import { env } from "@/config/env";
 
-let transporter: nodemailer.Transporter | null = null;
+let resendClient: Resend | null = null;
 
 function isMailerConfigured() {
-  return Boolean(env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASSWORD && env.SMTP_FROM_EMAIL);
+  return Boolean(env.RESEND_API_KEY && env.EMAIL_FROM);
 }
 
-function getTransporter() {
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: env.SMTP_HOST,
-      port: env.SMTP_PORT,
-      secure: env.SMTP_SECURE,
-      auth: { user: env.SMTP_USER, pass: env.SMTP_PASSWORD },
-    });
+function getClient() {
+  if (!resendClient) {
+    resendClient = new Resend(env.RESEND_API_KEY);
   }
-
-  return transporter;
+  return resendClient;
 }
 
 export async function sendEmail(input: { to: string; subject: string; html: string }) {
   if (!isMailerConfigured()) {
-    console.warn(`[mailer] SMTP is not configured; skipping email "${input.subject}" to ${input.to}.`);
+    console.warn(`[mailer] Resend is not configured; skipping email "${input.subject}" to ${input.to}.`);
     return;
   }
 
-  await getTransporter().sendMail({
-    from: `"${env.SMTP_FROM_NAME}" <${env.SMTP_FROM_EMAIL}>`,
+  const { error } = await getClient().emails.send({
+    from: env.EMAIL_FROM,
     to: input.to,
     subject: input.subject,
     html: input.html,
   });
+
+  if (error) {
+    console.error(`[mailer] Failed to send email "${input.subject}" to ${input.to}: ${error.message}`);
+  }
 }

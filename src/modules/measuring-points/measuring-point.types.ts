@@ -1,7 +1,9 @@
 import type { z } from "zod";
 
 import type {
+  invalidateMeasuringPointReadingBodySchema,
   measuringPointIdParamsSchema,
+  measuringPointReadingIdParamsSchema,
   measuringPointLookupQuerySchema,
   measuringPointReadingBodySchema,
 } from "@/modules/measuring-points/measuring-point.validation";
@@ -18,3 +20,12 @@ export type MeasuringPointReadingInput = z.infer<typeof measuringPointReadingBod
 };
 
 export type MeasuringPointIdParams = z.infer<typeof measuringPointIdParamsSchema>;
+export type MeasuringPointReadingIdParams = z.infer<typeof measuringPointReadingIdParamsSchema>;
+
+export type InvalidateMeasuringPointReadingInput = z.infer<typeof invalidateMeasuringPointReadingBodySchema> & {
+  companyId: string;
+  pointId: string;
+  readingId: string;
+  invalidatedByUserId: string;
+  invalidatedByName: string;
+};

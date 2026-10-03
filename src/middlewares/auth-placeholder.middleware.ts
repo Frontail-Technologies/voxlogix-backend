@@ -28,11 +28,6 @@ export function authPlaceholderMiddleware(
 
   const payload = verifyAccessToken(token);
 
-  // Fail closed: a verified-but-incomplete token (missing subject or role)
-  // must not authenticate as anyone, and must never default to the
-  // highest-privilege role. Every real token minted by signAccessToken
-  // always carries both claims (auth.service.ts); this only guards against
-  // a malformed/future token shape silently granting access.
   const subject = typeof payload?.sub === "string" ? payload.sub : typeof payload?.userId === "string" ? payload.userId : undefined;
   const role = typeof payload?.role === "string" ? payload.role : undefined;
 
@@ -42,6 +37,7 @@ export function authPlaceholderMiddleware(
       role,
       email: typeof payload.email === "string" ? payload.email : undefined,
       companyId: typeof payload.companyId === "string" ? payload.companyId : undefined,
+      requirePasswordReset: payload.requirePasswordReset === true,
     };
   }
 
@@ -61,4 +57,45 @@ export function requireAuth(request: Request, _response: Response, next: NextFun
   }
 
   next();
+}
+
+// Allowlist of path prefixes that are permitted even when requirePasswordReset=true.
+// Everything else gets a 403 PASSWORD_CHANGE_REQUIRED so the user is forced through
+// the change-password flow before accessing any real application data.
+const PASSWORD_RESET_ALLOWED_PREFIXES = [
+  "/api/auth/me",
+  "/api/auth/change-password",
+  "/api/auth/logout",
+  "/api/auth/refresh",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+];
+
+export function requirePasswordNotExpired(
+  request: Request,
+  _response: Response,
+  next: NextFunction,
+) {
+  if (!request.user?.requirePasswordReset) {
+    next();
+    return;
+  }
+
+  const path = request.path;
+  const allowed = PASSWORD_RESET_ALLOWED_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+
+  if (allowed) {
+    next();
+    return;
+  }
+
+  next(
+    new AppError({
+      message: "You must change your password before continuing.",
+      statusCode: HTTP_STATUS.FORBIDDEN,
+      errorCode: ERROR_CODES.PASSWORD_CHANGE_REQUIRED,
+    }),
+  );
 }

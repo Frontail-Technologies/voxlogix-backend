@@ -6,11 +6,14 @@ import { validate } from "@/middlewares/validate.middleware";
 import {
   getMeterCounterLookup,
   getMeterCounterReadings,
+  postInvalidateMeterCounterReading,
   postMeterCounterReading,
 } from "@/modules/meter-counters/meter-counter.controller";
 import {
+  invalidateMeterCounterReadingBodySchema,
   meterCounterIdParamsSchema,
   meterCounterLookupQuerySchema,
+  meterCounterReadingIdParamsSchema,
   meterCounterReadingBodySchema,
 } from "@/modules/meter-counters/meter-counter.validation";
 import { USER_ROLES } from "@/shared/constants";
@@ -30,6 +33,12 @@ meterCountersRouter.post(
   "/:counterId/readings",
   validate({ params: meterCounterIdParamsSchema, body: meterCounterReadingBodySchema }),
   postMeterCounterReading,
+);
+meterCountersRouter.post(
+  "/:counterId/readings/:readingId/invalidate",
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.PLANNER),
+  validate({ params: meterCounterReadingIdParamsSchema, body: invalidateMeterCounterReadingBodySchema }),
+  postInvalidateMeterCounterReading,
 );
 
 export { meterCountersRouter };

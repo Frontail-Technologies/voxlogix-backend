@@ -6,11 +6,14 @@ import { validate } from "@/middlewares/validate.middleware";
 import {
   getMeasuringPointLookup,
   getMeasuringPointReadings,
+  postInvalidateMeasuringPointReading,
   postMeasuringPointReading,
 } from "@/modules/measuring-points/measuring-point.controller";
 import {
+  invalidateMeasuringPointReadingBodySchema,
   measuringPointIdParamsSchema,
   measuringPointLookupQuerySchema,
+  measuringPointReadingIdParamsSchema,
   measuringPointReadingBodySchema,
 } from "@/modules/measuring-points/measuring-point.validation";
 import { USER_ROLES } from "@/shared/constants";
@@ -30,6 +33,12 @@ measuringPointsRouter.post(
   "/:pointId/readings",
   validate({ params: measuringPointIdParamsSchema, body: measuringPointReadingBodySchema }),
   postMeasuringPointReading,
+);
+measuringPointsRouter.post(
+  "/:pointId/readings/:readingId/invalidate",
+  requireRole(USER_ROLES.ADMIN, USER_ROLES.PLANNER),
+  validate({ params: measuringPointReadingIdParamsSchema, body: invalidateMeasuringPointReadingBodySchema }),
+  postInvalidateMeasuringPointReading,
 );
 
 export { measuringPointsRouter };

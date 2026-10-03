@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
 import {
@@ -12,6 +13,7 @@ import {
 import type {
   MeasuringPointLookupInput,
   MeasuringPointReadingInput,
+  InvalidateMeasuringPointReadingInput,
 } from "@/modules/measuring-points/measuring-point.types";
 import {
   dbNumber,
@@ -26,6 +28,9 @@ import { buildPagination } from "@/shared/helpers/pagination";
 import { resolveCanonicalModule } from "@/shared/services/module-lookup.service";
 
 type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "execute">;
+const VALID_READING_STATUS = "VALID";
+const INVALID_READING_STATUS = "INVALID";
+const invalidatedByAdmins = alias(admins, "invalidated_by_admins");
 
 function makeLogNumber() {
   return `LOG-${Date.now().toString().slice(-8)}`;
@@ -37,6 +42,20 @@ function makeReadingReportLogId() {
 
 function toNumberPayload(value: string | number | null | undefined) {
   return nullableNumber(value);
+}
+
+function mapInvalidatedMeasurementReading(row: typeof measuringPointReadings.$inferSelect) {
+  return {
+    id: row.id,
+    reportLogId: row.reportLogId,
+    pointId: row.pointId,
+    measuredValue: toNumberPayload(row.measuredValue),
+    status: row.status,
+    invalidatedAt: row.invalidatedAt,
+    invalidatedByUserId: row.invalidatedByUserId,
+    invalidationReason: row.invalidationReason,
+    reportedAt: row.reportedAt,
+  };
 }
 
 function mapPoint(row: {
@@ -124,6 +143,44 @@ async function createMeasurementAlertLog(
   });
 
   return created.id;
+}
+
+async function markMeasurementAlertLogInactive(
+  tx: DbExecutor,
+  input: { logId: string | null; actorId?: string; actorName?: string; reason: string },
+) {
+  if (!input.logId) return;
+
+  const [log] = await tx
+    .select({ id: operationalLogs.id, extractedFields: operationalLogs.extractedFields })
+    .from(operationalLogs)
+    .where(eq(operationalLogs.id, input.logId))
+    .limit(1);
+
+  if (!log) return;
+
+  await tx
+    .update(operationalLogs)
+    .set({
+      status: "INVALIDATED",
+      extractedFields: {
+        ...(log.extractedFields ?? {}),
+        isAlert: false,
+        readingInvalidated: true,
+        alertSuperseded: true,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(operationalLogs.id, input.logId));
+
+  await tx.insert(logTimelineEvents).values({
+    logId: input.logId,
+    actorId: input.actorId ?? null,
+    actorNameSnapshot: input.actorName ?? "System",
+    event: "Measurement alert invalidated",
+    status: "INVALIDATED",
+    notes: input.reason,
+  });
 }
 
 export async function listMeasuringPointLookup(input: MeasuringPointLookupInput) {
@@ -350,11 +407,16 @@ export async function listMeasuringPointReadings(companyId: string, pointId: str
       deviationPercent: measuringPointReadings.deviationPercent,
       measurementStatus: measuringPointReadings.measurementStatus,
       isAlert: measuringPointReadings.isAlert,
+      status: measuringPointReadings.status,
+      invalidatedAt: measuringPointReadings.invalidatedAt,
+      invalidationReason: measuringPointReadings.invalidationReason,
       reportedAt: measuringPointReadings.reportedAt,
       reportedBy: { id: admins.id, fullName: admins.fullName },
+      invalidatedBy: { id: invalidatedByAdmins.id, fullName: invalidatedByAdmins.fullName },
     })
     .from(measuringPointReadings)
     .leftJoin(admins, eq(measuringPointReadings.reportedById, admins.id))
+    .leftJoin(invalidatedByAdmins, eq(measuringPointReadings.invalidatedByUserId, invalidatedByAdmins.id))
     .where(and(eq(measuringPointReadings.companyId, companyId), eq(measuringPointReadings.pointId, pointId)))
     .orderBy(desc(measuringPointReadings.reportedAt))
     .limit(pagination.limit)
@@ -372,4 +434,59 @@ export async function listMeasuringPointReadings(companyId: string, pointId: str
     })),
     pagination,
   };
+}
+
+export async function invalidateMeasuringPointReading(input: InvalidateMeasuringPointReadingInput) {
+  const reason = input.reason.trim();
+
+  return db.transaction(async (tx) => {
+    const [reading] = await tx
+      .select()
+      .from(measuringPointReadings)
+      .where(and(
+        eq(measuringPointReadings.id, input.readingId),
+        eq(measuringPointReadings.pointId, input.pointId),
+        eq(measuringPointReadings.companyId, input.companyId),
+      ))
+      .limit(1);
+
+    if (!reading) {
+      throw new AppError({
+        message: "Measuring point reading not found.",
+        statusCode: HTTP_STATUS.NOT_FOUND,
+        errorCode: ERROR_CODES.NOT_FOUND,
+      });
+    }
+
+    if (reading.status === INVALID_READING_STATUS) {
+      return mapInvalidatedMeasurementReading(reading);
+    }
+
+    const now = new Date();
+    await tx
+      .update(measuringPointReadings)
+      .set({
+        status: INVALID_READING_STATUS,
+        invalidatedAt: now,
+        invalidatedByUserId: input.invalidatedByUserId,
+        invalidationReason: reason,
+        isAlert: false,
+      })
+      .where(eq(measuringPointReadings.id, reading.id));
+
+    await markMeasurementAlertLogInactive(tx, {
+      logId: reading.operationalLogId,
+      actorId: input.invalidatedByUserId,
+      actorName: input.invalidatedByName,
+      reason,
+    });
+
+    return mapInvalidatedMeasurementReading({
+      ...reading,
+      status: INVALID_READING_STATUS,
+      invalidatedAt: now,
+      invalidatedByUserId: input.invalidatedByUserId,
+      invalidationReason: reason,
+    });
+  });
 }

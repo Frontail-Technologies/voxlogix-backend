@@ -368,6 +368,10 @@ export const measuringPointReadings = pgTable(
     measurementStatus: varchar("measurement_status", { length: 40 }).notNull().default("NORMAL"),
     alertSeveritySnapshot: varchar("alert_severity_snapshot", { length: 40 }).notNull().default("MEDIUM"),
     isAlert: boolean("is_alert").notNull().default(false),
+    status: varchar("status", { length: 40 }).notNull().default("VALID"),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    invalidatedByUserId: uuid("invalidated_by_user_id").references(() => admins.id, { onDelete: "set null" }),
+    invalidationReason: varchar("invalidation_reason", { length: 500 }),
     reportedById: uuid("reported_by_id").references(() => admins.id, { onDelete: "set null" }),
     reportedAt: timestamp("reported_at", { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -375,6 +379,7 @@ export const measuringPointReadings = pgTable(
   (table) => ({
     companyIndex: index("measuring_point_readings_company_id_idx").on(table.companyId),
     pointTimeIndex: index("measuring_point_readings_point_reported_at_idx").on(table.pointId, table.reportedAt),
+    pointValidTimeIndex: index("measuring_point_readings_point_status_reported_at_idx").on(table.pointId, table.status, table.reportedAt),
     alertIndex: index("measuring_point_readings_alert_idx").on(table.companyId, table.isAlert),
     logIndex: index("measuring_point_readings_log_id_idx").on(table.operationalLogId),
     companyReportLogIndex: uniqueIndex("measuring_point_readings_company_report_log_uidx").on(
@@ -415,6 +420,10 @@ export const meterCounterReadings = pgTable(
     resetValueSnapshot: numeric("reset_value_snapshot", { precision: 16, scale: 4 }),
     counterStatus: varchar("counter_status", { length: 40 }).notNull().default("NORMAL"),
     isAlert: boolean("is_alert").notNull().default(false),
+    status: varchar("status", { length: 40 }).notNull().default("VALID"),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    invalidatedByUserId: uuid("invalidated_by_user_id").references(() => admins.id, { onDelete: "set null" }),
+    invalidationReason: varchar("invalidation_reason", { length: 500 }),
     reportedById: uuid("reported_by_id").references(() => admins.id, { onDelete: "set null" }),
     reportedAt: timestamp("reported_at", { withTimezone: true }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -422,6 +431,7 @@ export const meterCounterReadings = pgTable(
   (table) => ({
     companyIndex: index("meter_counter_readings_company_id_idx").on(table.companyId),
     counterTimeIndex: index("meter_counter_readings_counter_reported_at_idx").on(table.counterId, table.reportedAt),
+    counterValidTimeIndex: index("meter_counter_readings_counter_status_reported_at_idx").on(table.counterId, table.status, table.reportedAt),
     alertIndex: index("meter_counter_readings_alert_idx").on(table.companyId, table.isAlert),
     logIndex: index("meter_counter_readings_log_id_idx").on(table.operationalLogId),
     companyReportLogIndex: uniqueIndex("meter_counter_readings_company_report_log_uidx").on(
@@ -542,6 +552,7 @@ export const measuringPointReadingsRelations = relations(measuringPointReadings,
   equipment: one(equipmentAssets, { fields: [measuringPointReadings.equipmentId], references: [equipmentAssets.id] }),
   log: one(operationalLogs, { fields: [measuringPointReadings.operationalLogId], references: [operationalLogs.id] }),
   reportedBy: one(admins, { fields: [measuringPointReadings.reportedById], references: [admins.id] }),
+  invalidatedBy: one(admins, { fields: [measuringPointReadings.invalidatedByUserId], references: [admins.id] }),
 }));
 
 export const meterCountersRelations = relations(meterCounters, ({ one }) => ({
@@ -555,6 +566,7 @@ export const meterCounterReadingsRelations = relations(meterCounterReadings, ({ 
   equipment: one(equipmentAssets, { fields: [meterCounterReadings.equipmentId], references: [equipmentAssets.id] }),
   log: one(operationalLogs, { fields: [meterCounterReadings.operationalLogId], references: [operationalLogs.id] }),
   reportedBy: one(admins, { fields: [meterCounterReadings.reportedById], references: [admins.id] }),
+  invalidatedBy: one(admins, { fields: [meterCounterReadings.invalidatedByUserId], references: [admins.id] }),
 }));
 
 export const kaizenCategoriesRelations = relations(kaizenCategories, ({ one }) => ({

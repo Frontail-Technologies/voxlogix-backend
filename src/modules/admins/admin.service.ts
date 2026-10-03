@@ -20,6 +20,7 @@ import type {
   ResetPasswordInput,
   UpdateAdminInput,
 } from "@/modules/admins/admin.types";
+import { USER_ROLES, USER_STATUS } from "@/shared/constants";
 import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
@@ -27,6 +28,7 @@ import { buildPagination } from "@/shared/helpers/pagination";
 import { sanitizeString } from "@/shared/helpers/sanitize";
 import { hashPassword } from "@/shared/security/password";
 import { createPlatformActivity } from "@/shared/services/activity-log.service";
+import { assertSeatCapacity } from "@/shared/services/company-seats.service";
 
 function buildInitials(fullName: string) {
   const words = fullName
@@ -310,27 +312,40 @@ export async function createAdmin(input: CreateAdminInput) {
   const fullName = sanitizeString(input.fullName);
   const hashedPassword = await hashPassword(input.temporaryPassword);
   const initials = buildInitials(fullName);
+  const role = input.role as string;
+  const status = input.status as string;
+  // A seat is consumed whenever an ACTIVE company user is created.
+  // MASTER accounts are platform-level and never count as company seats.
+  const consumesSeat = status === USER_STATUS.ACTIVE && role !== USER_ROLES.MASTER;
 
-  const [createdAdmin] = await db
-    .insert(admins)
-    .values({
-      companyId: input.companyId,
-      fullName,
-      initials,
-      username: sanitizeString(input.username).toLowerCase(),
-      email: sanitizeString(input.email).toLowerCase(),
-      phone: sanitizeString(input.phone),
-      avatarUrl: input.avatarUrl ?? null,
-      avatarKey: input.avatarKey ?? null,
-      status: input.status as typeof admins.$inferInsert.status,
-      role: input.role as typeof admins.$inferInsert.role,
-      passwordHash: hashedPassword,
-      requirePasswordReset: input.requirePasswordReset ?? true,
-      updatedAt: now,
-      joinedOn: now,
-      createdAt: now,
-    })
-    .returning({ id: admins.id });
+  const createdAdmin = await db.transaction(async (tx) => {
+    if (consumesSeat) {
+      await assertSeatCapacity(input.companyId, 1, tx);
+    }
+
+    const [row] = await tx
+      .insert(admins)
+      .values({
+        companyId: input.companyId,
+        fullName,
+        initials,
+        username: sanitizeString(input.username).toLowerCase(),
+        email: sanitizeString(input.email).toLowerCase(),
+        phone: sanitizeString(input.phone),
+        avatarUrl: input.avatarUrl ?? null,
+        avatarKey: input.avatarKey ?? null,
+        status: status as typeof admins.$inferInsert.status,
+        role: role as typeof admins.$inferInsert.role,
+        passwordHash: hashedPassword,
+        requirePasswordReset: input.requirePasswordReset ?? true,
+        updatedAt: now,
+        joinedOn: now,
+        createdAt: now,
+      })
+      .returning({ id: admins.id });
+
+    return row;
+  });
 
   await createPlatformActivity({
     event: `Admin "${fullName}" created`,
@@ -406,7 +421,23 @@ export async function updateAdmin(adminId: string, input: UpdateAdminInput) {
     updatePayload.avatarKey = input.avatarKey;
   }
 
-  await db.update(admins).set(updatePayload).where(eq(admins.id, adminId));
+  // A seat is consumed when reactivating an INACTIVE company user (INACTIVE → ACTIVE).
+  // Use the FINAL role after the update to decide whether a seat applies.
+  const finalRole = (input.role ?? currentAdmin.role) as string;
+  const isReactivation =
+    currentAdmin.status === USER_STATUS.INACTIVE &&
+    input.status === USER_STATUS.ACTIVE &&
+    finalRole !== USER_ROLES.MASTER;
+
+  if (isReactivation) {
+    const companyId = updatePayload.companyId ?? currentAdmin.company.id;
+    await db.transaction(async (tx) => {
+      await assertSeatCapacity(companyId, 1, tx);
+      await tx.update(admins).set(updatePayload).where(eq(admins.id, adminId));
+    });
+  } else {
+    await db.update(admins).set(updatePayload).where(eq(admins.id, adminId));
+  }
 
   await createPlatformActivity({
     event: `Admin "${updatePayload.fullName ?? currentAdmin.fullName}" updated`,

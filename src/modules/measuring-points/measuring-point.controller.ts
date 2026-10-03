@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 
 import {
   createMeasuringPointReading,
+  invalidateMeasuringPointReading,
   listMeasuringPointLookup,
   listMeasuringPointReadings,
 } from "@/modules/measuring-points/measuring-point.service";
@@ -55,4 +56,17 @@ export const getMeasuringPointReadings = asyncHandler(async (request: Request, r
   );
 
   return sendSuccess(response, { data: result.items, meta: result.pagination });
+});
+
+export const postInvalidateMeasuringPointReading = asyncHandler(async (request: Request, response: Response) => {
+  const reading = await invalidateMeasuringPointReading({
+    companyId: companyIdOf(request),
+    pointId: paramOf(request, "pointId"),
+    readingId: paramOf(request, "readingId"),
+    invalidatedByUserId: String(request.user?.id ?? ""),
+    invalidatedByName: userNameOf(request),
+    reason: request.body.reason,
+  });
+
+  return sendSuccess(response, { data: reading });
 });

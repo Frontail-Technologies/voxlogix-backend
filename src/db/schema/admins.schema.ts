@@ -1,10 +1,11 @@
-﻿import { relations } from "drizzle-orm";
+﻿import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   index,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
@@ -46,10 +47,12 @@ export const admins = pgTable(
   },
   (table) => ({
     companyIndex: index("admins_company_id_idx").on(table.companyId),
-    companyEmployeeIndex: index("admins_company_employee_id_idx").on(
-      table.companyId,
-      table.employeeId,
-    ),
+    // Partial unique index: NULL employee_ids are excluded so records that have
+    // no employee ID assigned don't collide, while non-null employee IDs are
+    // enforced unique per company at the DB level.
+    uniqueEmployeeIdIndex: uniqueIndex("admins_company_employee_id_uidx")
+      .on(table.companyId, table.employeeId)
+      .where(sql`${table.employeeId} IS NOT NULL`),
     statusIndex: index("admins_status_idx").on(table.status),
     nameIndex: index("admins_full_name_idx").on(table.fullName),
   }),
@@ -102,6 +105,32 @@ export const authSessions = pgTable(
     adminIndex: index("auth_sessions_admin_id_idx").on(table.adminId),
   }),
 );
+
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    adminId: uuid("admin_id")
+      .notNull()
+      .references(() => admins.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    adminIndex: index("password_reset_tokens_admin_id_idx").on(table.adminId),
+  }),
+);
+
+export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
+  admin: one(admins, {
+    fields: [passwordResetTokens.adminId],
+    references: [admins.id],
+  }),
+}));
 
 export const passwordResetOtps = pgTable(
   "password_reset_otps",

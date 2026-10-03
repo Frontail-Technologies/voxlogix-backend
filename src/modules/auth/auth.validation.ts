@@ -14,15 +14,9 @@ export const forgotPasswordBodySchema = z.object({
   identifier: z.string().trim().min(3).max(255),
 });
 
-export const verifyResetOtpBodySchema = z.object({
-  identifier: z.string().trim().min(3).max(255),
-  otp: z.string().trim().length(6),
-});
-
-export const resetPasswordBodySchema = z
+export const resetPasswordWithTokenBodySchema = z
   .object({
-    identifier: z.string().trim().min(3).max(255),
-    otp: z.string().trim().length(6),
+    token: z.string().trim().min(1).max(128),
     newPassword: z.string().min(6).max(100),
     confirmPassword: z.string().min(6).max(100),
   })

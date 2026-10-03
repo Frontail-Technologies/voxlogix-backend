@@ -8,6 +8,13 @@ export const listImportedMasterDataQuerySchema = z.object({
 });
 
 export const importedMasterDataIdParamsSchema = z.object({ id: z.string().uuid() });
+export const importedMasterDataReadingIdParamsSchema = importedMasterDataIdParamsSchema.extend({
+  readingId: z.string().uuid(),
+});
+
+export const invalidateReadingBodySchema = z.object({
+  reason: z.string().trim().min(1, "Reason is required.").max(500, "Reason must be 500 characters or fewer."),
+});
 
 // Editing status back to ACTIVE is how a deactivated ("deleted") record is
 // reactivated — there's no separate reactivate endpoint.

@@ -11,21 +11,17 @@ import {
   postLogin,
   postLogout,
   postRefresh,
-  postResetPassword,
-  postVerifyResetOtp,
+  postResetPasswordWithToken,
 } from "./auth.controller";
 import {
   changePasswordBodySchema,
   forgotPasswordBodySchema,
   loginBodySchema,
-  resetPasswordBodySchema,
-  verifyResetOtpBodySchema,
+  resetPasswordWithTokenBodySchema,
 } from "./auth.validation";
 
 const authRouter = Router();
 
-// Credential-guessing surface (login, refresh, OTP verify/reset) gets a
-// dedicated tighter rate limit; see security audit.
 authRouter.post("/login", authRateLimitMiddleware, validate({ body: loginBodySchema }), postLogin);
 authRouter.post("/refresh", authRateLimitMiddleware, postRefresh);
 authRouter.get("/me", requireAuth, getMe);
@@ -43,16 +39,10 @@ authRouter.post(
   postForgotPassword,
 );
 authRouter.post(
-  "/verify-otp",
-  authRateLimitMiddleware,
-  validate({ body: verifyResetOtpBodySchema }),
-  postVerifyResetOtp,
-);
-authRouter.post(
   "/reset-password",
   authRateLimitMiddleware,
-  validate({ body: resetPasswordBodySchema }),
-  postResetPassword,
+  validate({ body: resetPasswordWithTokenBodySchema }),
+  postResetPasswordWithToken,
 );
 
 export { authRouter };

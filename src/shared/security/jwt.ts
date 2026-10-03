@@ -8,6 +8,7 @@ type TokenPayload = JwtPayload & {
   email?: string;
   companyId?: string;
   jti?: string;
+  requirePasswordReset?: boolean;
 };
 
 const JWT_ALGORITHM = "HS256";

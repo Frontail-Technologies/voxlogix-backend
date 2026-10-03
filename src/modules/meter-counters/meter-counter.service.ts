@@ -1,4 +1,5 @@
-import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, ilike, or, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 
 import { db } from "@/db";
 import {
@@ -12,6 +13,7 @@ import {
 import type {
   MeterCounterLookupInput,
   MeterCounterReadingInput,
+  InvalidateMeterCounterReadingInput,
 } from "@/modules/meter-counters/meter-counter.types";
 import {
   dbNumber,
@@ -26,6 +28,9 @@ import { buildPagination } from "@/shared/helpers/pagination";
 import { resolveCanonicalModule } from "@/shared/services/module-lookup.service";
 
 type DbExecutor = Pick<typeof db, "select" | "insert" | "update" | "execute">;
+const VALID_READING_STATUS = "VALID";
+const INVALID_READING_STATUS = "INVALID";
+const invalidatedByAdmins = alias(admins, "invalidated_by_admins");
 
 function makeLogNumber() {
   return `LOG-${Date.now().toString().slice(-8)}`;
@@ -37,6 +42,20 @@ function makeReadingReportLogId() {
 
 function toNumberPayload(value: string | number | null | undefined) {
   return nullableNumber(value);
+}
+
+function mapInvalidatedCounterReading(row: typeof meterCounterReadings.$inferSelect) {
+  return {
+    id: row.id,
+    reportLogId: row.reportLogId,
+    counterId: row.counterId,
+    currentReading: toNumberPayload(row.currentReading),
+    status: row.status,
+    invalidatedAt: row.invalidatedAt,
+    invalidatedByUserId: row.invalidatedByUserId,
+    invalidationReason: row.invalidationReason,
+    reportedAt: row.reportedAt,
+  };
 }
 
 async function getCounterModule(tx: DbExecutor) {
@@ -88,6 +107,58 @@ async function createCounterAlertLog(
   });
 
   return created.id;
+}
+
+async function markCounterAlertLogInactive(
+  tx: DbExecutor,
+  input: { logId: string | null; actorId?: string; actorName?: string; reason: string },
+) {
+  if (!input.logId) return;
+
+  const [log] = await tx
+    .select({ id: operationalLogs.id, extractedFields: operationalLogs.extractedFields })
+    .from(operationalLogs)
+    .where(eq(operationalLogs.id, input.logId))
+    .limit(1);
+
+  if (!log) return;
+
+  await tx
+    .update(operationalLogs)
+    .set({
+      status: "INVALIDATED",
+      extractedFields: {
+        ...(log.extractedFields ?? {}),
+        isAlert: false,
+        readingInvalidated: true,
+        alertSuperseded: true,
+      },
+      updatedAt: new Date(),
+    })
+    .where(eq(operationalLogs.id, input.logId));
+
+  await tx.insert(logTimelineEvents).values({
+    logId: input.logId,
+    actorId: input.actorId ?? null,
+    actorNameSnapshot: input.actorName ?? "System",
+    event: "Meter counter alert invalidated",
+    status: "INVALIDATED",
+    notes: input.reason,
+  });
+}
+
+async function updateCounterAlertLogFields(
+  tx: DbExecutor,
+  input: { logId: string; fields: Record<string, unknown> },
+) {
+  await tx
+    .update(operationalLogs)
+    .set({
+      status: "HIGH_DEVIATION",
+      extractedFields: input.fields,
+      updatedAt: new Date(),
+    })
+    .where(eq(operationalLogs.id, input.logId));
 }
 
 function mapCounter(row: {
@@ -155,6 +226,7 @@ export async function listMeterCounterLookup(input: MeterCounterLookupInput) {
     SELECT ${meterCounterReadings.currentReading}
     FROM ${meterCounterReadings}
     WHERE ${meterCounterReadings.counterId} = ${meterCounters.id}
+      AND ${meterCounterReadings.status} = ${VALID_READING_STATUS}
     ORDER BY ${meterCounterReadings.reportedAt} DESC
     LIMIT 1
   )`;
@@ -162,6 +234,7 @@ export async function listMeterCounterLookup(input: MeterCounterLookupInput) {
     SELECT ${meterCounterReadings.reportedAt}
     FROM ${meterCounterReadings}
     WHERE ${meterCounterReadings.counterId} = ${meterCounters.id}
+      AND ${meterCounterReadings.status} = ${VALID_READING_STATUS}
     ORDER BY ${meterCounterReadings.reportedAt} DESC
     LIMIT 1
   )`.mapWith(meterCounterReadings.reportedAt);
@@ -260,7 +333,11 @@ export async function createMeterCounterReading(input: MeterCounterReadingInput)
         reportedAt: meterCounterReadings.reportedAt,
       })
       .from(meterCounterReadings)
-      .where(and(eq(meterCounterReadings.companyId, input.companyId), eq(meterCounterReadings.counterId, counter.id)))
+      .where(and(
+        eq(meterCounterReadings.companyId, input.companyId),
+        eq(meterCounterReadings.counterId, counter.id),
+        eq(meterCounterReadings.status, VALID_READING_STATUS),
+      ))
       .orderBy(desc(meterCounterReadings.reportedAt))
       .limit(1);
 
@@ -422,11 +499,16 @@ export async function listMeterCounterReadings(companyId: string, counterId: str
       alertDeviationPct: meterCounterReadings.alertDeviationPctSnapshot,
       counterStatus: meterCounterReadings.counterStatus,
       isAlert: meterCounterReadings.isAlert,
+      status: meterCounterReadings.status,
+      invalidatedAt: meterCounterReadings.invalidatedAt,
+      invalidationReason: meterCounterReadings.invalidationReason,
       reportedAt: meterCounterReadings.reportedAt,
       reportedBy: { id: admins.id, fullName: admins.fullName },
+      invalidatedBy: { id: invalidatedByAdmins.id, fullName: invalidatedByAdmins.fullName },
     })
     .from(meterCounterReadings)
     .leftJoin(admins, eq(meterCounterReadings.reportedById, admins.id))
+    .leftJoin(invalidatedByAdmins, eq(meterCounterReadings.invalidatedByUserId, invalidatedByAdmins.id))
     .where(and(eq(meterCounterReadings.companyId, companyId), eq(meterCounterReadings.counterId, counterId)))
     .orderBy(desc(meterCounterReadings.reportedAt))
     .limit(pagination.limit)
@@ -445,4 +527,215 @@ export async function listMeterCounterReadings(companyId: string, counterId: str
     })),
     pagination,
   };
+}
+
+export async function invalidateMeterCounterReading(input: InvalidateMeterCounterReadingInput) {
+  const reason = input.reason.trim();
+
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT id
+      FROM ${meterCounters}
+      WHERE ${meterCounters.id} = ${input.counterId}
+        AND ${meterCounters.companyId} = ${input.companyId}
+      FOR UPDATE
+    `);
+
+    const [reading] = await tx
+      .select()
+      .from(meterCounterReadings)
+      .where(and(
+        eq(meterCounterReadings.id, input.readingId),
+        eq(meterCounterReadings.counterId, input.counterId),
+        eq(meterCounterReadings.companyId, input.companyId),
+      ))
+      .limit(1);
+
+    if (!reading) {
+      throw new AppError({
+        message: "Meter counter reading not found.",
+        statusCode: HTTP_STATUS.NOT_FOUND,
+        errorCode: ERROR_CODES.NOT_FOUND,
+      });
+    }
+
+    if (reading.status === INVALID_READING_STATUS) {
+      return mapInvalidatedCounterReading(reading);
+    }
+
+    const now = new Date();
+    await tx
+      .update(meterCounterReadings)
+      .set({
+        status: INVALID_READING_STATUS,
+        invalidatedAt: now,
+        invalidatedByUserId: input.invalidatedByUserId,
+        invalidationReason: reason,
+        isAlert: false,
+      })
+      .where(eq(meterCounterReadings.id, reading.id));
+
+    await markCounterAlertLogInactive(tx, {
+      logId: reading.operationalLogId,
+      actorId: input.invalidatedByUserId,
+      actorName: input.invalidatedByName,
+      reason,
+    });
+
+    await recalculateMeterCounterReadingsAfter(tx, {
+      companyId: input.companyId,
+      counterId: input.counterId,
+      after: reading.reportedAt,
+      actorId: input.invalidatedByUserId,
+      actorName: input.invalidatedByName,
+      reason: `Recalculated after invalidating ${reading.reportLogId}: ${reason}`,
+    });
+
+    return mapInvalidatedCounterReading({
+      ...reading,
+      status: INVALID_READING_STATUS,
+      invalidatedAt: now,
+      invalidatedByUserId: input.invalidatedByUserId,
+      invalidationReason: reason,
+    });
+  });
+}
+
+async function recalculateMeterCounterReadingsAfter(
+  tx: DbExecutor,
+  input: {
+    companyId: string;
+    counterId: string;
+    after: Date;
+    actorId: string;
+    actorName: string;
+    reason: string;
+  },
+) {
+  const [counter] = await tx
+    .select({
+      id: meterCounters.id,
+      equipmentId: meterCounters.equipmentId,
+      counterCode: meterCounters.counterCode,
+      counterName: meterCounters.counterName,
+      counterUnit: meterCounters.counterUnit,
+      initialReading: meterCounters.initialReading,
+      resetValue: meterCounters.resetValue,
+      expectedDailyConsumption: meterCounters.expectedDailyConsumption,
+      alertDeviationPct: meterCounters.alertDeviationPct,
+    })
+    .from(meterCounters)
+    .where(and(eq(meterCounters.id, input.counterId), eq(meterCounters.companyId, input.companyId)))
+    .limit(1);
+
+  if (!counter) return;
+
+  const [previous] = await tx
+    .select({
+      currentReading: meterCounterReadings.currentReading,
+      reportedAt: meterCounterReadings.reportedAt,
+    })
+    .from(meterCounterReadings)
+    .where(and(
+      eq(meterCounterReadings.companyId, input.companyId),
+      eq(meterCounterReadings.counterId, input.counterId),
+      eq(meterCounterReadings.status, VALID_READING_STATUS),
+      sql<boolean>`${meterCounterReadings.reportedAt} < ${input.after}`,
+    ))
+    .orderBy(desc(meterCounterReadings.reportedAt))
+    .limit(1);
+
+  let previousReading = previous ? nullableNumber(previous.currentReading) : nullableNumber(counter.initialReading);
+  let previousReadingAt = previous?.reportedAt ?? null;
+  const resetValue = nullableNumber(counter.resetValue);
+  const expectedDailyConsumption = nullableNumber(counter.expectedDailyConsumption);
+  const alertDeviationPct = nullableNumber(counter.alertDeviationPct);
+  const module = await getCounterModule(tx);
+
+  const downstream = await tx
+    .select()
+    .from(meterCounterReadings)
+    .where(and(
+      eq(meterCounterReadings.companyId, input.companyId),
+      eq(meterCounterReadings.counterId, input.counterId),
+      eq(meterCounterReadings.status, VALID_READING_STATUS),
+      gt(meterCounterReadings.reportedAt, input.after),
+    ))
+    .orderBy(asc(meterCounterReadings.reportedAt), asc(meterCounterReadings.createdAt));
+
+  for (const row of downstream) {
+    const currentReading = nullableNumber(row.currentReading)!;
+    const result = evaluateCounterReading({
+      currentReading,
+      previousReading,
+      previousReadingAt,
+      currentReadingAt: row.reportedAt,
+      resetValue,
+      expectedDailyConsumption,
+      alertDeviationPct,
+    });
+
+    const alertFields = {
+      readingType: "METER_COUNTER",
+      isAlert: result.isAlert,
+      readingStatus: result.counterStatus,
+      counterStatus: result.counterStatus,
+      readingId: row.id,
+      counterId: counter.id,
+      counterCode: counter.counterCode,
+      counterName: counter.counterName,
+      unit: counter.counterUnit,
+      currentReading,
+      previousReading,
+      previousReadingAt,
+      consumptionDelta: result.consumptionDelta,
+      expectedConsumptionForPeriod: result.expectedConsumptionForPeriod,
+      deviation: result.deviation,
+      deviationPercent: result.deviationPercent,
+      alertDeviationPct,
+    };
+
+    let operationalLogId = row.operationalLogId;
+    if (result.isAlert) {
+      if (operationalLogId) {
+        await updateCounterAlertLogFields(tx, { logId: operationalLogId, fields: alertFields });
+      } else {
+        operationalLogId = await createCounterAlertLog(tx, {
+          companyId: input.companyId,
+          moduleId: module.id,
+          moduleType: module.type,
+          equipmentId: row.equipmentId,
+          reportedById: row.reportedById ?? undefined,
+          reportedByName: input.actorName,
+          title: `${counter.counterCode} - ${counter.counterName} high deviation`,
+          extractedFields: alertFields,
+        });
+      }
+    } else if (operationalLogId) {
+      await markCounterAlertLogInactive(tx, {
+        logId: operationalLogId,
+        actorId: input.actorId,
+        actorName: input.actorName,
+        reason: input.reason,
+      });
+    }
+
+    await tx
+      .update(meterCounterReadings)
+      .set({
+        operationalLogId,
+        previousReading: dbNumber(previousReading),
+        consumptionDelta: dbNumber(result.consumptionDelta),
+        previousReadingAt,
+        expectedConsumptionForPeriod: dbNumber(result.expectedConsumptionForPeriod),
+        deviation: dbNumber(result.deviation),
+        deviationPercent: dbNumber(result.deviationPercent),
+        counterStatus: result.counterStatus,
+        isAlert: result.isAlert,
+      })
+      .where(eq(meterCounterReadings.id, row.id));
+
+    previousReading = currentReading;
+    previousReadingAt = row.reportedAt;
+  }
 }

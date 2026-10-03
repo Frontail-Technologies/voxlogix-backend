@@ -4,8 +4,7 @@ import type {
   changePasswordBodySchema,
   forgotPasswordBodySchema,
   loginBodySchema,
-  resetPasswordBodySchema,
-  verifyResetOtpBodySchema,
+  resetPasswordWithTokenBodySchema,
 } from "./auth.validation";
 
 export type LoginInput = z.infer<typeof loginBodySchema>;
@@ -13,8 +12,7 @@ export type ChangePasswordInput = z.infer<typeof changePasswordBodySchema> & {
   userId: string;
 };
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordBodySchema>;
-export type VerifyResetOtpInput = z.infer<typeof verifyResetOtpBodySchema>;
-export type ResetPasswordInput = z.infer<typeof resetPasswordBodySchema>;
+export type ResetPasswordWithTokenInput = z.infer<typeof resetPasswordWithTokenBodySchema>;
 
 export type SessionUser = {
   id: string;
@@ -30,4 +28,3 @@ export type SessionUser = {
     name: string;
   };
 };
-

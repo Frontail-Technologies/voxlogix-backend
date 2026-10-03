@@ -11,6 +11,7 @@ import { listEquipment } from "@/modules/equipment/equipment.service";
 import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
+import { matchToExistingOption, MULTILINGUAL_EXTRACTION_INSTRUCTION } from "@/modules/ai/ai-extraction.policy";
 
 // The assistant is given the equipment's COMPLETE manual(s) and COMPLETE log history — no
 // truncation and no "last N" cut. The only bound is a safety ceiling well above any real
@@ -297,10 +298,6 @@ function buildFieldDescriptions(extractableFields: ModuleFieldRow[]) {
     .join("\n");
 }
 
-function normalizeOptionText(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
 // Deterministic, explainable mapping only — never a probabilistic/fuzzy-library guess.
 // 1. exact match after normalization (case/whitespace-insensitive)
 // 2. a conservative containment match: one string fully contains the other AND the shorter
@@ -308,27 +305,6 @@ function normalizeOptionText(value: string) {
 //    generic word trivially "matching" every option that happens to contain it.
 // Anything that clears neither bar returns null — the caller leaves the field unresolved
 // rather than substituting the nearest-sounding option.
-function matchToExistingOption(extractedValue: string, options: string[]): string | null {
-  const normalizedExtracted = normalizeOptionText(extractedValue);
-  if (!normalizedExtracted) return null;
-
-  const exact = options.find((option) => normalizeOptionText(option) === normalizedExtracted);
-  if (exact) return exact;
-
-  let best: { option: string; ratio: number } | null = null;
-  for (const option of options) {
-    const normalizedOption = normalizeOptionText(option);
-    if (!normalizedOption) continue;
-    const contains = normalizedOption.includes(normalizedExtracted) || normalizedExtracted.includes(normalizedOption);
-    if (!contains) continue;
-    const ratio = Math.min(normalizedOption.length, normalizedExtracted.length) / Math.max(normalizedOption.length, normalizedExtracted.length);
-    if (ratio >= 0.7 && (!best || ratio > best.ratio)) {
-      best = { option, ratio };
-    }
-  }
-  return best?.option ?? null;
-}
-
 // Applied once, after the model returns — resolves every Select field's free-text semantic
 // value to one of its real options where confident, and blanks it otherwise so the Review
 // screen's own dropdown is left genuinely unresolved instead of showing a fabricated pick.
@@ -458,6 +434,7 @@ export async function extractLogFields(input: ExtractLogFieldsInput): Promise<Ex
 
   const systemInstruction = [
     "You are an industrial maintenance assistant. A field technician has just described an equipment issue by voice.",
+    MULTILINGUAL_EXTRACTION_INSTRUCTION,
     "Extract the following fields from their transcript for a maintenance log:",
     buildFieldDescriptions(extractableFields),
     "For ordinary text/number/date fields: if the transcript does not mention one, make a reasonable, conservative inference from context; never leave those empty.",

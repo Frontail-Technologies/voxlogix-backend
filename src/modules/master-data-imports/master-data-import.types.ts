@@ -66,6 +66,9 @@ export type PreviewSheet = {
     accepted: number;
     rejected: number;
   };
+  // Present only on the "users" sheet when the accepted rows would exceed available seats.
+  // Commit-time enforcement is authoritative; this is an early warning only.
+  capacityWarning?: string | null;
 };
 
 export type MasterDataImportPreview = {

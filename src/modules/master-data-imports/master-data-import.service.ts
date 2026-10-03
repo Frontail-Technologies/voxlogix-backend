@@ -1,7 +1,12 @@
+import { randomBytes } from "node:crypto";
+
 import { and, eq, inArray, sql } from "drizzle-orm";
 import * as XLSX from "xlsx";
 
+import { env } from "@/config/env";
 import { db } from "@/db";
+import { calculateSeatDelta, findSafetyDuplicateIndexes, normalizedImportKey, normalizedSafetyKey, type SeatRow } from "@/modules/master-data-imports/master-data-import.domain";
+import { assertSeatCapacity, getCompanySeatInfo } from "@/shared/services/company-seats.service";
 import {
   admins,
   equipmentAssets,
@@ -30,10 +35,10 @@ import {
 } from "@/shared/domain/meter-counter-configuration";
 import { sanitizeNullableString, sanitizeString } from "@/shared/helpers/sanitize";
 import { hashPassword } from "@/shared/security/password";
+import { welcomeNewUserEmail } from "@/shared/services/email-templates";
+import { sendEmail } from "@/shared/services/mailer.service";
 
 type Row = Record<string, string>;
-
-const DEFAULT_TEMP_PASSWORD = "Voxlogix@123";
 
 const SHEETS = {
   equipment: "Equipment Master",
@@ -441,7 +446,29 @@ async function importIssueCategories(companyId: string, rows: Row[], result: She
 }
 
 async function importSafety(companyId: string, rows: Row[], result: SheetImportSummary) {
-  for (const row of rows) {
+  // In-workbook duplicate detection: identity is (incidentCategory, incidentType).
+  // Severity is an attribute, not part of identity — a row whose severity changed
+  // must update the existing record, not create a second one.
+  const duplicateSafetyIndexes = findSafetyDuplicateIndexes(
+    rows.map((row) => ({
+      incidentCategory: value(row, "INCIDENT CATEGORY"),
+      incidentType: value(row, "INCIDENT TYPE"),
+    })),
+  );
+  if (duplicateSafetyIndexes.size > 0) {
+    const rowNumbersByKey = new Map<string, number[]>();
+    rows.forEach((row, index) => {
+      if (!duplicateSafetyIndexes.has(index)) return;
+      const key = normalizedSafetyKey(value(row, "INCIDENT CATEGORY"), value(row, "INCIDENT TYPE"));
+      rowNumbersByKey.set(key, [...(rowNumbersByKey.get(key) ?? []), index + 5]);
+    });
+    for (const [key, rowNumbers] of rowNumbersByKey.entries()) {
+      const [cat, type] = key.split("|");
+      result.errors.push(`Safety entry "${cat} / ${type}" appears multiple times in rows ${rowNumbers.join(", ")}. Duplicate rows were skipped.`);
+    }
+  }
+
+  for (const [rowIndex, row] of rows.entries()) {
     const incidentCategory = value(row, "INCIDENT CATEGORY");
     const incidentType = value(row, "INCIDENT TYPE");
 
@@ -451,16 +478,22 @@ async function importSafety(companyId: string, rows: Row[], result: SheetImportS
       continue;
     }
 
+    if (duplicateSafetyIndexes.has(rowIndex)) {
+      result.skipped += 1;
+      continue;
+    }
+
     const severityLevel = value(row, "SEVERITY LEVEL") || "MEDIUM";
+    // Identity: (companyId, incidentCategory, incidentType) — case-insensitive.
+    // Severity is NOT part of identity; changing it on re-import updates the existing row.
     const [existing] = await db
       .select({ id: safetyReportingMasters.id })
       .from(safetyReportingMasters)
       .where(
         and(
           eq(safetyReportingMasters.companyId, companyId),
-          eq(safetyReportingMasters.incidentCategory, incidentCategory),
-          eq(safetyReportingMasters.incidentType, incidentType),
-          eq(safetyReportingMasters.severityLevel, severityLevel),
+          sql`lower(${safetyReportingMasters.incidentCategory}) = ${normalizedImportKey(incidentCategory)}`,
+          sql`lower(${safetyReportingMasters.incidentType}) = ${normalizedImportKey(incidentType)}`,
         ),
       )
       .limit(1);
@@ -710,8 +743,34 @@ async function importKaizen(companyId: string, rows: Row[], result: SheetImportS
 }
 
 async function importUsers(companyId: string, rows: Row[], result: SheetImportSummary) {
-  const passwordHash = await hashPassword(DEFAULT_TEMP_PASSWORD);
   const duplicateEmployeeIds = duplicateBusinessIds(rows, "EMPLOYEE ID", result);
+
+  // Batch-lookup existing users once to avoid N+1 queries and to pre-compute the seat
+  // delta before acquiring the lock.
+  const allEmployeeIds = rows.map((r) => value(r, "EMPLOYEE ID")).filter(Boolean);
+  const allEmails = rows.map((r) => value(r, "EMAIL").toLowerCase()).filter(Boolean);
+
+  const [byEmployeeIdRows, byEmailRows] = await Promise.all([
+    allEmployeeIds.length
+      ? db.select({ id: admins.id, employeeId: admins.employeeId, status: admins.status })
+           .from(admins).where(and(eq(admins.companyId, companyId), inArray(admins.employeeId, allEmployeeIds)))
+      : Promise.resolve([] as { id: string; employeeId: string | null; status: string }[]),
+    allEmails.length
+      ? db.select({ id: admins.id, email: admins.email, employeeId: admins.employeeId })
+           .from(admins).where(inArray(admins.email, allEmails))
+      : Promise.resolve([] as { id: string; email: string; employeeId: string | null }[]),
+  ]);
+
+  const existingByEmployeeId = new Map(byEmployeeIdRows.map((a) => [a.employeeId ?? "", a]));
+  const existingByEmail = new Map(byEmailRows.map((a) => [a.email.toLowerCase(), a]));
+
+  // Classify each row into valid (to write) or skipped.
+  type ValidRow = {
+    existingId: string | undefined;
+    payload: Omit<typeof admins.$inferInsert, "id" | "passwordHash" | "requirePasswordReset">;
+  };
+  const validRows: ValidRow[] = [];
+  const seatRows: SeatRow[] = [];
 
   for (const row of rows) {
     const fullName = value(row, "FULL NAME");
@@ -729,23 +788,16 @@ async function importUsers(companyId: string, rows: Row[], result: SheetImportSu
       continue;
     }
 
-    const [existingByEmployeeId] = await db
-      .select({ id: admins.id })
-      .from(admins)
-      .where(and(eq(admins.companyId, companyId), eq(admins.employeeId, employeeId)))
-      .limit(1);
-    const [existingByEmail] = await db
-      .select({ id: admins.id, employeeId: admins.employeeId })
-      .from(admins)
-      .where(eq(admins.email, email))
-      .limit(1);
+    const existingByEid = existingByEmployeeId.get(employeeId);
+    const existingByMail = existingByEmail.get(email);
 
-    if (existingByEmail && existingByEmail.id !== existingByEmployeeId?.id) {
+    if (existingByMail && existingByMail.id !== existingByEid?.id) {
       result.skipped += 1;
       result.errors.push(`User ${employeeId} skipped: email ${email} already belongs to another user.`);
       continue;
     }
 
+    const targetActive = yesNo(value(row, "ACTIVE")) !== "NO";
     const payload = {
       companyId,
       employeeId,
@@ -755,16 +807,75 @@ async function importUsers(companyId: string, rows: Row[], result: SheetImportSu
       email,
       phone: value(row, "PHONE") || "NA",
       role: roleFor(value(row, "ROLE")),
-      status: yesNo(value(row, "ACTIVE")) === "NO" ? USER_STATUS.INACTIVE : USER_STATUS.ACTIVE,
+      status: targetActive ? USER_STATUS.ACTIVE : USER_STATUS.INACTIVE,
       updatedAt: new Date(),
     };
 
-    if (existingByEmployeeId) {
-      await db.update(admins).set(payload).where(eq(admins.id, existingByEmployeeId.id));
-      markUpdated(result);
-    } else {
-      await db.insert(admins).values({ ...payload, passwordHash, requirePasswordReset: true });
-      markCreated(result);
+    validRows.push({ existingId: existingByEid?.id, payload });
+    seatRows.push({ employeeId, targetActive });
+  }
+
+  // Pre-compute a unique temporary credential per NEW user.
+  // Hashing is done before the seat lock so bcrypt work doesn't run inside a transaction.
+  type NewUserCred = { passwordHash: string; plainPassword: string };
+  const newUserCreds = new Map<number, NewUserCred>();
+  await Promise.all(
+    validRows.map(async ({ existingId }, idx) => {
+      if (!existingId) {
+        const plain = randomBytes(12).toString("base64url").slice(0, 16);
+        const hash = await hashPassword(plain);
+        newUserCreds.set(idx, { passwordHash: hash, plainPassword: plain });
+      }
+    }),
+  );
+
+  // Calculate the net seat impact of this import.
+  const existingStatusMap = new Map(
+    byEmployeeIdRows.map((a) => [normalizedImportKey(a.employeeId ?? ""), { status: a.status }]),
+  );
+  const { netDelta } = calculateSeatDelta(seatRows, existingStatusMap);
+
+  if (netDelta > 0) {
+    // At least one new seat will be consumed — acquire capacity atomically.
+    await db.transaction(async (tx) => {
+      await assertSeatCapacity(companyId, netDelta, tx);
+      for (const [idx, { existingId, payload }] of validRows.entries()) {
+        if (existingId) {
+          await tx.update(admins).set(payload).where(eq(admins.id, existingId));
+          markUpdated(result);
+        } else {
+          const creds = newUserCreds.get(idx)!;
+          await tx.insert(admins).values({ ...payload, passwordHash: creds.passwordHash, requirePasswordReset: true });
+          markCreated(result);
+        }
+      }
+    });
+  } else {
+    // No new seats consumed (deactivations, updates, no-ops) — run directly.
+    for (const [idx, { existingId, payload }] of validRows.entries()) {
+      if (existingId) {
+        await db.update(admins).set(payload).where(eq(admins.id, existingId));
+        markUpdated(result);
+      } else {
+        const creds = newUserCreds.get(idx)!;
+        await db.insert(admins).values({ ...payload, passwordHash: creds.passwordHash, requirePasswordReset: true });
+        markCreated(result);
+      }
+    }
+  }
+
+  // Send welcome emails to newly created users — best-effort, import success is not gated on delivery.
+  const loginUrl = env.CLIENT_WEB_URL || "";
+  for (const [idx, { existingId, payload }] of validRows.entries()) {
+    if (!existingId && newUserCreds.has(idx)) {
+      const { plainPassword } = newUserCreds.get(idx)!;
+      sendEmail({
+        to: payload.email as string,
+        subject: "Welcome to VoxLogiX — your temporary password",
+        html: welcomeNewUserEmail({ fullName: payload.fullName as string, temporaryPassword: plainPassword, loginUrl }),
+      }).catch((err: unknown) => {
+        console.error(`[import] Welcome email to ${payload.email as string} failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
   }
 }
@@ -842,9 +953,21 @@ function previewIssueCategoriesRows(rows: Row[]): PreviewRow[] {
 }
 
 function previewSafetyRows(rows: Row[]): PreviewRow[] {
+  // In-workbook duplicate detection mirrors importSafety: identity is (category, type).
+  const duplicateIndexes = findSafetyDuplicateIndexes(
+    rows.map((row) => ({
+      incidentCategory: value(row, "INCIDENT CATEGORY"),
+      incidentType: value(row, "INCIDENT TYPE"),
+    })),
+  );
+
   return rows.map((row, index) => {
     const errors: PreviewRowError[] = [];
-    if (!value(row, "INCIDENT CATEGORY")) errors.push(requiredError("INCIDENT CATEGORY", "Incident Category"));
+    if (!value(row, "INCIDENT CATEGORY")) {
+      errors.push(requiredError("INCIDENT CATEGORY", "Incident Category"));
+    } else if (duplicateIndexes.has(index)) {
+      errors.push({ field: "INCIDENT CATEGORY", code: "DUPLICATE", message: "This incident category + type appears more than once in this workbook." });
+    }
     if (!value(row, "INCIDENT TYPE")) errors.push(requiredError("INCIDENT TYPE", "Incident Type"));
     return makePreviewRow(index, row, errors);
   });
@@ -920,7 +1043,7 @@ async function previewMeterCountersRows(companyId: string, rows: Row[]): Promise
   });
 }
 
-async function previewUsersRows(companyId: string, rows: Row[]): Promise<PreviewRow[]> {
+async function previewUsersRows(companyId: string, rows: Row[]): Promise<{ rows: PreviewRow[]; capacityWarning: string | null }> {
   const duplicates = duplicateRowIndexes(rows, "EMPLOYEE ID");
 
   // Mirrors importUsers' own two lookups exactly, just batched across the whole sheet
@@ -931,19 +1054,22 @@ async function previewUsersRows(companyId: string, rows: Row[]): Promise<Preview
   const employeeIds = rows.map((row) => value(row, "EMPLOYEE ID")).filter(Boolean);
   const emails = rows.map((row) => value(row, "EMAIL").toLowerCase()).filter(Boolean);
 
-  const byEmployeeId = employeeIds.length
-    ? await db.select({ id: admins.id, employeeId: admins.employeeId }).from(admins).where(and(eq(admins.companyId, companyId), inArray(admins.employeeId, employeeIds)))
-    : [];
-  // Emails are already stored lowercase (importUsers lowercases on write), so a plain
-  // inArray against the already-lowercased lookup list matches without needing lower().
-  const byEmail = emails.length
-    ? await db.select({ id: admins.id, email: admins.email }).from(admins).where(inArray(admins.email, emails))
-    : [];
+  const [byEmployeeId, byEmail] = await Promise.all([
+    employeeIds.length
+      ? db.select({ id: admins.id, employeeId: admins.employeeId, status: admins.status })
+           .from(admins).where(and(eq(admins.companyId, companyId), inArray(admins.employeeId, employeeIds)))
+      : Promise.resolve([] as { id: string; employeeId: string | null; status: string }[]),
+    // Emails are already stored lowercase (importUsers lowercases on write), so a plain
+    // inArray against the already-lowercased lookup list matches without needing lower().
+    emails.length
+      ? db.select({ id: admins.id, email: admins.email }).from(admins).where(inArray(admins.email, emails))
+      : Promise.resolve([] as { id: string; email: string }[]),
+  ]);
 
   const adminIdByEmployeeId = new Map(byEmployeeId.map((admin) => [admin.employeeId, admin.id]));
   const adminIdByEmail = new Map(byEmail.map((admin) => [admin.email.toLowerCase(), admin.id]));
 
-  return rows.map((row, index) => {
+  const previewRows = rows.map((row, index) => {
     const errors: PreviewRowError[] = [];
     const employeeId = value(row, "EMPLOYEE ID");
     const email = value(row, "EMAIL").toLowerCase();
@@ -965,6 +1091,29 @@ async function previewUsersRows(companyId: string, rows: Row[]): Promise<Preview
 
     return makePreviewRow(index, row, errors);
   });
+
+  // Capacity warning: compute the net seat delta for accepted rows and compare with available seats.
+  const acceptedRows = previewRows
+    .filter((r) => r.status === "accepted")
+    .map((r) => ({
+      employeeId: value(r.values, "EMPLOYEE ID"),
+      targetActive: yesNo(value(r.values, "ACTIVE")) !== "NO",
+    }));
+
+  const existingStatusMap = new Map(
+    byEmployeeId.map((a) => [normalizedImportKey(a.employeeId ?? ""), { status: a.status }]),
+  );
+  const { netDelta } = calculateSeatDelta(acceptedRows, existingStatusMap);
+
+  let capacityWarning: string | null = null;
+  if (netDelta > 0) {
+    const seatInfo = await getCompanySeatInfo(companyId);
+    if (netDelta > seatInfo.available) {
+      capacityWarning = `This import would require ${netDelta} new seat${netDelta !== 1 ? "s" : ""} but only ${seatInfo.available} of ${seatInfo.limit} are available. The commit will be rejected.`;
+    }
+  }
+
+  return { rows: previewRows, capacityWarning };
 }
 
 function previewKaizenRows(rows: Row[]): PreviewRow[] {
@@ -1004,6 +1153,7 @@ export async function buildMasterDataImportPreview(input: {
     const { rows } = readSheetRows(workbook, sheetName, SHEET_FORWARD_FILL_COLUMNS[key]);
 
     let previewRows: PreviewRow[];
+    let capacityWarning: string | null = null;
     switch (key) {
       case "locations":
         previewRows = previewLocationsRows(rows);
@@ -1023,9 +1173,12 @@ export async function buildMasterDataImportPreview(input: {
       case "meterCounters":
         previewRows = await previewMeterCountersRows(input.companyId, rows);
         break;
-      case "users":
-        previewRows = await previewUsersRows(input.companyId, rows);
+      case "users": {
+        const usersResult = await previewUsersRows(input.companyId, rows);
+        previewRows = usersResult.rows;
+        capacityWarning = usersResult.capacityWarning;
         break;
+      }
       case "kaizen":
         previewRows = previewKaizenRows(rows);
         break;
@@ -1047,6 +1200,7 @@ export async function buildMasterDataImportPreview(input: {
       gatingModule,
       rows: previewRows,
       counts: { total: previewRows.length, accepted, rejected: previewRows.length - accepted },
+      ...(capacityWarning != null ? { capacityWarning } : {}),
     });
   }
 

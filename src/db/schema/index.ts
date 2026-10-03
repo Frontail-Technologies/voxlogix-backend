@@ -13,7 +13,7 @@ import {
   userStatusEnum,
 } from "@/db/schema/enums.schema";
 import { companies } from "@/db/schema/companies.schema";
-import { admins, adminLoginHistory, passwordResetOtps } from "@/db/schema/admins.schema";
+import { admins, adminLoginHistory, passwordResetOtps, passwordResetTokens } from "@/db/schema/admins.schema";
 import { moduleCategories, moduleFields, modules, moduleTypes } from "@/db/schema/modules.schema";
 import {
   platformGeneralSettings,
@@ -53,6 +53,7 @@ export const schema = {
   admins,
   adminLoginHistory,
   passwordResetOtps,
+  passwordResetTokens,
   modules,
   moduleFields,
   moduleTypes,

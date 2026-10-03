@@ -64,7 +64,7 @@ async function latestMeasuringPointReadings(pointIds: string[]) {
       reportedAt: measuringPointReadings.reportedAt,
     })
     .from(measuringPointReadings)
-    .where(inArray(measuringPointReadings.pointId, pointIds))
+    .where(and(inArray(measuringPointReadings.pointId, pointIds), eq(measuringPointReadings.status, "VALID")))
     .orderBy(measuringPointReadings.pointId, desc(measuringPointReadings.reportedAt));
   return new Map(rows.map((row) => [row.pointId, { value: row.value, status: row.status, isAlert: row.isAlert, reportedAt: row.reportedAt }]));
 }
@@ -80,7 +80,7 @@ async function latestMeterCounterReadings(counterIds: string[]) {
       reportedAt: meterCounterReadings.reportedAt,
     })
     .from(meterCounterReadings)
-    .where(inArray(meterCounterReadings.counterId, counterIds))
+    .where(and(inArray(meterCounterReadings.counterId, counterIds), eq(meterCounterReadings.status, "VALID")))
     .orderBy(meterCounterReadings.counterId, desc(meterCounterReadings.reportedAt));
   return new Map(rows.map((row) => [row.counterId, { value: row.value, status: row.status, isAlert: row.isAlert, reportedAt: row.reportedAt }]));
 }

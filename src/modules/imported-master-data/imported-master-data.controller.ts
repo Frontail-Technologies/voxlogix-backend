@@ -19,13 +19,21 @@ import {
 // again here under /imported-master-data so the admin web panel (which only
 // otherwise talks to /imported-master-data/*) doesn't need to know about a
 // second, mobile-facing route prefix.
-import { listMeasuringPointReadings } from "@/modules/measuring-points/measuring-point.service";
-import { listMeterCounterReadings } from "@/modules/meter-counters/meter-counter.service";
+import {
+  invalidateMeasuringPointReading,
+  listMeasuringPointReadings,
+} from "@/modules/measuring-points/measuring-point.service";
+import {
+  invalidateMeterCounterReading,
+  listMeterCounterReadings,
+} from "@/modules/meter-counters/meter-counter.service";
 import { sendSuccess } from "@/shared/helpers/api-response";
 import { asyncHandler } from "@/shared/helpers/async-handler";
 
 function companyIdOf(request: Request) { return String(request.user?.companyId ?? ""); }
 function idParam(request: Request) { return String(request.params.id); }
+function readingIdParam(request: Request) { return String(request.params.readingId); }
+function userNameOf(request: Request) { return request.user?.email ?? "System"; }
 function listInput(request: Request) {
   return {
     companyId: companyIdOf(request),
@@ -57,6 +65,17 @@ export const getMeasuringPointReadingHistory = asyncHandler(async (request: Requ
   const result = await listMeasuringPointReadings(companyIdOf(request), idParam(request), Number(request.query.page ?? 1), Number(request.query.limit ?? 30));
   return sendSuccess(response, { data: result.items, meta: result.pagination });
 });
+export const postInvalidateImportedMeasuringPointReading = asyncHandler(async (request: Request, response: Response) =>
+  sendSuccess(response, {
+    data: await invalidateMeasuringPointReading({
+      companyId: companyIdOf(request),
+      pointId: idParam(request),
+      readingId: readingIdParam(request),
+      invalidatedByUserId: String(request.user?.id ?? ""),
+      invalidatedByName: userNameOf(request),
+      reason: request.body.reason,
+    }),
+  }));
 
 export const getMeterCounters = asyncHandler(async (request: Request, response: Response) => {
   const result = await listMeterCounters(listInput(request));
@@ -70,6 +89,17 @@ export const getMeterCounterReadingHistory = asyncHandler(async (request: Reques
   const result = await listMeterCounterReadings(companyIdOf(request), idParam(request), Number(request.query.page ?? 1), Number(request.query.limit ?? 30));
   return sendSuccess(response, { data: result.items, meta: result.pagination });
 });
+export const postInvalidateImportedMeterCounterReading = asyncHandler(async (request: Request, response: Response) =>
+  sendSuccess(response, {
+    data: await invalidateMeterCounterReading({
+      companyId: companyIdOf(request),
+      counterId: idParam(request),
+      readingId: readingIdParam(request),
+      invalidatedByUserId: String(request.user?.id ?? ""),
+      invalidatedByName: userNameOf(request),
+      reason: request.body.reason,
+    }),
+  }));
 
 export const getKaizenCategories = asyncHandler(async (request: Request, response: Response) => {
   const result = await listKaizenCategories(listInput(request));

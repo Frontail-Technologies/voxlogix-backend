@@ -7,6 +7,7 @@ declare global {
       role: string;
       email?: string;
       companyId?: string;
+      requirePasswordReset?: boolean;
     }
 
     interface Request {

@@ -1,25 +1,26 @@
+import { createHash, randomBytes } from "node:crypto";
+
 import { and, desc, eq, isNull, or } from "drizzle-orm";
 
 import { env } from "@/config/env";
 import { db } from "@/db";
-import { adminLoginHistory, admins, authSessions, companies, passwordResetOtps } from "@/db/schema";
+import { adminLoginHistory, admins, authSessions, companies, passwordResetTokens } from "@/db/schema";
 import type {
   ChangePasswordInput,
   ForgotPasswordInput,
   LoginInput,
-  ResetPasswordInput,
+  ResetPasswordWithTokenInput,
   SessionUser,
-  VerifyResetOtpInput,
 } from "@/modules/auth/auth.types";
 import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from "@/shared/security/jwt";
 import { comparePassword, hashPassword } from "@/shared/security/password";
-import { passwordResetOtpEmail } from "@/shared/services/email-templates";
+import { passwordResetLinkEmail } from "@/shared/services/email-templates";
 import { sendEmail } from "@/shared/services/mailer.service";
 
-const OTP_EXPIRY_MINUTES = 10;
+const RESET_TOKEN_EXPIRY_MINUTES = 30;
 
 type SessionAdminRow = {
   id: string;
@@ -32,6 +33,12 @@ type SessionAdminRow = {
   requirePasswordReset: boolean;
   companyId: string;
   companyName: string;
+};
+
+export type SessionResult = {
+  accessToken: string;
+  refreshToken: string;
+  user: SessionUser;
 };
 
 function mapAdminToSessionUser(admin: SessionAdminRow): SessionUser {
@@ -67,10 +74,6 @@ function invalidCredentialsError() {
   });
 }
 
-// Parses the simple "<number><unit>" duration strings this project's JWT_*_EXPIRES_IN
-// env vars already use (e.g. "15m", "7d") — kept local/minimal rather than pulling in
-// a duration-parsing dependency for one call site. Falls back to 7 days on an
-// unrecognized format so a session row is never created with a bogus/immediate expiry.
 function parseDurationMs(duration: string): number {
   const match = /^(\d+)\s*(s|m|h|d)$/.exec(duration.trim());
   if (!match) return 7 * 24 * 60 * 60 * 1000;
@@ -79,12 +82,13 @@ function parseDurationMs(duration: string): number {
   return value * unitMs;
 }
 
-async function createSession(admin: SessionAdminRow, meta?: { userAgent?: string }) {
+async function createSession(admin: SessionAdminRow, meta?: { userAgent?: string }): Promise<SessionResult> {
   const tokenPayload = {
     sub: admin.id,
     role: admin.role,
     email: admin.email,
     companyId: admin.companyId,
+    requirePasswordReset: admin.requirePasswordReset,
   };
 
   const [session] = await db
@@ -104,14 +108,18 @@ async function createSession(admin: SessionAdminRow, meta?: { userAgent?: string
   };
 }
 
-/** Marks one session row revoked (idempotent). Used both by refresh-token
- * rotation (revoke the just-consumed session before minting its successor)
- * and by logout. */
 async function revokeSession(sessionId: string) {
   await db.update(authSessions).set({ revokedAt: new Date() }).where(and(eq(authSessions.id, sessionId), isNull(authSessions.revokedAt)));
 }
 
-export async function login(input: LoginInput, meta?: { userAgent?: string }) {
+export async function revokeAllSessionsForAdmin(adminId: string) {
+  await db
+    .update(authSessions)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(authSessions.adminId, adminId), isNull(authSessions.revokedAt)));
+}
+
+export async function login(input: LoginInput, meta?: { userAgent?: string }): Promise<SessionResult> {
   const identifier = input.identifier.trim().toLowerCase();
 
   const [admin] = await db
@@ -176,7 +184,7 @@ export async function login(input: LoginInput, meta?: { userAgent?: string }) {
   return createSession(admin, meta);
 }
 
-export async function refreshSession(refreshToken?: string, meta?: { userAgent?: string }) {
+export async function refreshSession(refreshToken?: string, meta?: { userAgent?: string }): Promise<SessionResult> {
   if (!refreshToken) {
     throw unauthorizedSessionError();
   }
@@ -190,18 +198,12 @@ export async function refreshSession(refreshToken?: string, meta?: { userAgent?:
         : undefined;
   const sessionId = typeof payload?.jti === "string" ? payload.jti : undefined;
 
-  // A refresh token minted before this session table existed carries no
-  // jti and is rejected here — this forces a one-time re-login for
-  // whoever's session was already active at deploy time (see report).
   if (!userId || !sessionId) {
     throw unauthorizedSessionError();
   }
 
   const [session] = await db.select().from(authSessions).where(eq(authSessions.id, sessionId)).limit(1);
 
-  // Missing, revoked (already rotated away or logged out), expired, or
-  // bound to a different admin than the token's own subject claims — all
-  // treated identically as "this refresh token no longer works."
   if (!session || session.adminId !== userId || session.revokedAt || session.expiresAt.getTime() < Date.now()) {
     throw unauthorizedSessionError();
   }
@@ -246,19 +248,12 @@ export async function refreshSession(refreshToken?: string, meta?: { userAgent?:
     });
   }
 
-  // Rotation: this session is spent the moment it's used to refresh. If the
-  // same (now-stale) refresh token is presented again — e.g. a stolen copy
-  // replayed after the legitimate client already rotated — the check above
-  // (`session.revokedAt`) denies it on its next use.
   const rotatedAt = new Date();
   await db.update(authSessions).set({ revokedAt: rotatedAt, lastUsedAt: rotatedAt }).where(eq(authSessions.id, sessionId));
 
   return createSession(admin, meta);
 }
 
-/** Revokes the session a refresh token points to, if any. Used by logout —
- * tolerant of an already-expired/garbage/missing token (nothing to revoke,
- * not an error) since the client-side cookies/storage get cleared either way. */
 export async function logout(refreshToken?: string) {
   if (!refreshToken) return;
 
@@ -299,7 +294,9 @@ export async function getCurrentUser(userId: string): Promise<SessionUser> {
   return mapAdminToSessionUser(admin);
 }
 
-export async function changePassword(input: ChangePasswordInput) {
+export async function changePassword(
+  input: ChangePasswordInput & { userAgent?: string },
+): Promise<SessionResult> {
   const [admin] = await db
     .select({ id: admins.id, passwordHash: admins.passwordHash })
     .from(admins)
@@ -331,111 +328,133 @@ export async function changePassword(input: ChangePasswordInput) {
     .set({ passwordHash: newPasswordHash, requirePasswordReset: false, updatedAt: new Date() })
     .where(eq(admins.id, admin.id));
 
-  return { id: admin.id };
-}
+  // Revoke all existing sessions so other devices/browsers are logged out.
+  // Then create a fresh session with requirePasswordReset=false in the token
+  // so the caller gets new cookies / tokens immediately without a separate login.
+  await revokeAllSessionsForAdmin(admin.id);
 
-function generateOtp() {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
+  const [updatedAdmin] = await db
+    .select({
+      id: admins.id,
+      fullName: admins.fullName,
+      initials: admins.initials,
+      avatarUrl: admins.avatarUrl,
+      username: admins.username,
+      email: admins.email,
+      role: admins.role,
+      requirePasswordReset: admins.requirePasswordReset,
+      companyId: companies.id,
+      companyName: companies.name,
+    })
+    .from(admins)
+    .innerJoin(companies, eq(admins.companyId, companies.id))
+    .where(eq(admins.id, admin.id))
+    .limit(1);
 
-function invalidOtpError() {
-  return new AppError({
-    message: "Invalid or expired verification code.",
-    statusCode: HTTP_STATUS.BAD_REQUEST,
-    errorCode: ERROR_CODES.VALIDATION_ERROR,
-  });
+  if (!updatedAdmin) throw unauthorizedSessionError();
+
+  return createSession(updatedAdmin, { userAgent: input.userAgent });
 }
 
 async function findAdminByIdentifier(identifier: string) {
   const value = identifier.trim().toLowerCase();
 
   const [admin] = await db
-    .select({ id: admins.id, fullName: admins.fullName, email: admins.email, status: admins.status })
+    .select({
+      id: admins.id,
+      fullName: admins.fullName,
+      email: admins.email,
+      status: admins.status,
+      companyStatus: companies.status,
+    })
     .from(admins)
+    .innerJoin(companies, eq(admins.companyId, companies.id))
     .where(or(eq(admins.username, value), eq(admins.email, value)))
     .limit(1);
 
   return admin ?? null;
 }
 
-async function findValidOtp(adminId: string, otp: string) {
-  const [latest] = await db
-    .select({
-      id: passwordResetOtps.id,
-      otpHash: passwordResetOtps.otpHash,
-      expiresAt: passwordResetOtps.expiresAt,
-      consumedAt: passwordResetOtps.consumedAt,
-    })
-    .from(passwordResetOtps)
-    .where(eq(passwordResetOtps.adminId, adminId))
-    .orderBy(desc(passwordResetOtps.createdAt))
-    .limit(1);
-
-  if (!latest || latest.consumedAt || latest.expiresAt.getTime() < Date.now()) {
-    return null;
-  }
-
-  const matches = await comparePassword(otp, latest.otpHash);
-  return matches ? latest : null;
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
 }
 
 export async function requestPasswordReset(input: ForgotPasswordInput) {
   const admin = await findAdminByIdentifier(input.identifier);
 
-  if (admin && admin.status === "ACTIVE") {
-    const otp = generateOtp();
-    const otpHash = await hashPassword(otp);
-    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
+  // Only send for ACTIVE accounts in ACTIVE/DEMO companies — same checks as login.
+  if (admin && admin.status === "ACTIVE" && (admin.companyStatus === "ACTIVE" || admin.companyStatus === "DEMO")) {
+    const rawToken = randomBytes(32).toString("hex");
+    const tokenHash = hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_EXPIRY_MINUTES * 60_000);
 
-    await db.insert(passwordResetOtps).values({ adminId: admin.id, otpHash, expiresAt });
+    // Invalidate any previous unused tokens for this admin so there is only
+    // ever one valid outstanding reset link at a time.
+    await db
+      .update(passwordResetTokens)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(passwordResetTokens.adminId, admin.id), isNull(passwordResetTokens.consumedAt)));
 
-    if (env.NODE_ENV !== "production") {
-      console.log(`[auth] Password reset OTP for ${admin.email}: ${otp}`);
-    }
+    await db.insert(passwordResetTokens).values({ adminId: admin.id, tokenHash, expiresAt });
+
+    const baseUrl = env.PASSWORD_RESET_WEB_URL || "http://localhost:3000/reset-password";
+    const resetUrl = `${baseUrl}?token=${rawToken}`;
 
     await sendEmail({
       to: admin.email,
       subject: "Reset your VoxLogiX password",
-      html: passwordResetOtpEmail({
+      html: passwordResetLinkEmail({
         fullName: admin.fullName,
-        otp,
-        expiresInMinutes: OTP_EXPIRY_MINUTES,
+        resetUrl,
+        expiresInMinutes: RESET_TOKEN_EXPIRY_MINUTES,
       }),
     });
   }
 
-  // Always return a generic response so callers cannot use this endpoint to enumerate accounts.
-  return { message: "If an account matches, a reset code has been sent to its email address." };
+  return { message: "If an account exists for this email, a password reset link has been sent." };
 }
 
-export async function verifyPasswordResetOtp(input: VerifyResetOtpInput) {
-  const admin = await findAdminByIdentifier(input.identifier);
-  if (!admin) throw invalidOtpError();
-
-  const otpRow = await findValidOtp(admin.id, input.otp);
-  if (!otpRow) throw invalidOtpError();
-
-  return { valid: true };
+function invalidTokenError() {
+  return new AppError({
+    message: "This reset link is invalid or has expired.",
+    statusCode: HTTP_STATUS.BAD_REQUEST,
+    errorCode: ERROR_CODES.VALIDATION_ERROR,
+  });
 }
 
-export async function resetPasswordWithOtp(input: ResetPasswordInput) {
-  const admin = await findAdminByIdentifier(input.identifier);
-  if (!admin) throw invalidOtpError();
+export async function resetPasswordWithToken(input: ResetPasswordWithTokenInput) {
+  const tokenHash = hashToken(input.token);
 
-  const otpRow = await findValidOtp(admin.id, input.otp);
-  if (!otpRow) throw invalidOtpError();
+  const [tokenRow] = await db
+    .select({
+      id: passwordResetTokens.id,
+      adminId: passwordResetTokens.adminId,
+      expiresAt: passwordResetTokens.expiresAt,
+      consumedAt: passwordResetTokens.consumedAt,
+    })
+    .from(passwordResetTokens)
+    .where(eq(passwordResetTokens.tokenHash, tokenHash))
+    .orderBy(desc(passwordResetTokens.createdAt))
+    .limit(1);
+
+  if (!tokenRow || tokenRow.consumedAt || tokenRow.expiresAt.getTime() < Date.now()) {
+    throw invalidTokenError();
+  }
 
   const newPasswordHash = await hashPassword(input.newPassword);
 
   await db
     .update(admins)
     .set({ passwordHash: newPasswordHash, requirePasswordReset: false, updatedAt: new Date() })
-    .where(eq(admins.id, admin.id));
+    .where(eq(admins.id, tokenRow.adminId));
 
   await db
-    .update(passwordResetOtps)
+    .update(passwordResetTokens)
     .set({ consumedAt: new Date() })
-    .where(eq(passwordResetOtps.id, otpRow.id));
+    .where(eq(passwordResetTokens.id, tokenRow.id));
 
-  return { id: admin.id };
+  // Revoke all sessions — after a forgotten-password reset the user must log in fresh.
+  await revokeAllSessionsForAdmin(tokenRow.adminId);
+
+  return { message: "Password reset successfully. Please sign in." };
 }

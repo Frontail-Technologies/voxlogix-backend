@@ -5,7 +5,9 @@
   eq,
   gte,
   ilike,
+  ne,
   or,
+  sql,
   sum,
   type SQL,
 } from "drizzle-orm";
@@ -26,6 +28,7 @@ import type {
   UpdateCompanyAccessInput,
   UpdateCompanyInput,
 } from "@/modules/companies/company.types";
+import { USER_ROLES, USER_STATUS } from "@/shared/constants";
 import { AppError } from "@/shared/errors/app-error";
 import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
@@ -33,6 +36,7 @@ import { buildPagination } from "@/shared/helpers/pagination";
 import { sanitizeString } from "@/shared/helpers/sanitize";
 import { toSlug } from "@/shared/helpers/slug";
 import { createPlatformActivity } from "@/shared/services/activity-log.service";
+import { getActiveSeatCount } from "@/shared/services/company-seats.service";
 import { ensureCompanyAccessSettings } from "@/shared/services/platform-defaults.service";
 
 function buildCompaniesFilter({
@@ -216,6 +220,18 @@ export async function listCompanies(input: ListCompaniesInput) {
       status: companies.status,
       createdAt: companies.createdAt,
       updatedAt: companies.updatedAt,
+      // Correlated subqueries: one pass per company (max 20 rows), avoids N+1.
+      activeUsers: sql<number>`(
+        SELECT COUNT(*)::int FROM admins
+        WHERE admins.company_id = ${companies.id}
+          AND admins.status = ${USER_STATUS.ACTIVE}
+          AND admins.role != ${USER_ROLES.MASTER}
+      )`,
+      userCreationLimit: sql<number>`(
+        SELECT user_creation_limit FROM company_access_settings
+        WHERE company_access_settings.company_id = ${companies.id}
+        LIMIT 1
+      )`,
     })
     .from(companies)
     .where(where)
@@ -272,10 +288,24 @@ export async function getCompanyById(companyId: string) {
     .where(eq(companies.id, companyId))
     .limit(1);
 
-  const [{ totalAdmins }] = await db
-    .select({ totalAdmins: count() })
+  // Real active-seat counts broken down by role. MASTER users are platform-level
+  // and never count as company seats.
+  const roleCounts = await db
+    .select({ role: admins.role, count: count() })
     .from(admins)
-    .where(eq(admins.companyId, companyId));
+    .where(
+      and(
+        eq(admins.companyId, companyId),
+        eq(admins.status, USER_STATUS.ACTIVE),
+        ne(admins.role, USER_ROLES.MASTER),
+      ),
+    )
+    .groupBy(admins.role);
+
+  const activeAdmins = roleCounts.find((r) => r.role === USER_ROLES.ADMIN)?.count ?? 0;
+  const activePlanners = roleCounts.find((r) => r.role === USER_ROLES.PLANNER)?.count ?? 0;
+  const activeExecutionUsers = roleCounts.find((r) => r.role === USER_ROLES.EXECUTION)?.count ?? 0;
+  const activeUsers = activeAdmins + activePlanners + activeExecutionUsers;
 
   const usageTotals = await getCompanyUsageTotals(companyId);
   const accessSettings = await ensureCompanyAccessSettings(companyId);
@@ -284,9 +314,10 @@ export async function getCompanyById(companyId: string) {
   return {
     ...company,
     stats: {
-      totalAdmins,
-      totalPlanners: 0,
-      totalExecutionUsers: 0,
+      activeUsers,
+      activeAdmins,
+      activePlanners,
+      activeExecutionUsers,
       totalLogs: usageTotals.totalAiLogs,
       aiUsageThisMonthLogs: usageTotals.monthAiLogs,
       storageUsedGb: 0,
@@ -295,6 +326,7 @@ export async function getCompanyById(companyId: string) {
     },
     accessSummary: {
       userCreationLimit: accessSettings.userCreationLimit,
+      availableSeats: Math.max(0, accessSettings.userCreationLimit - activeUsers),
       aiUsageLimitMinutes: accessSettings.aiUsageLimitMinutes,
       storageLimitGb: accessSettings.storageLimitGb,
     },
@@ -462,6 +494,18 @@ export async function updateCompanyAccessById(
   await ensureCompanyAccessSettings(companyId);
 
   const { enabledModuleIds, ...settingsInput } = input;
+
+  // Prevent Master from lowering the limit below the company's current active seat count.
+  if (settingsInput.userCreationLimit !== undefined) {
+    const activeCount = await getActiveSeatCount(companyId);
+    if (settingsInput.userCreationLimit < activeCount) {
+      throw new AppError({
+        message: `Cannot set user limit to ${settingsInput.userCreationLimit}. The company currently has ${activeCount} active user${activeCount !== 1 ? "s" : ""}.`,
+        statusCode: HTTP_STATUS.CONFLICT,
+        errorCode: ERROR_CODES.SEAT_LIMIT_REACHED,
+      });
+    }
+  }
 
   if (Object.keys(settingsInput).length) {
     await db

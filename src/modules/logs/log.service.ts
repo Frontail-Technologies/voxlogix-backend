@@ -24,6 +24,7 @@ import { ERROR_CODES } from "@/shared/errors/error-codes";
 import { HTTP_STATUS } from "@/shared/errors/http-status";
 import { buildPagination } from "@/shared/helpers/pagination";
 import { sanitizeString } from "@/shared/helpers/sanitize";
+import { transcriptForStorage } from "@/modules/logs/transcript.policy";
 
 function buildLogsFilter(input: Omit<ListLogsInput, "page" | "limit">) {
   const filters: SQL<unknown>[] = [eq(operationalLogs.companyId, input.companyId)];
@@ -294,7 +295,7 @@ export async function createLog(input: CreateLogInput) {
       moduleType: sanitizeString(input.moduleType),
       title: sanitizeString(input.title),
       description: input.description ? sanitizeString(input.description) : null,
-      transcript: input.transcript ? input.transcript.trim() : null,
+      transcript: transcriptForStorage(input.transcript),
       issueCategory: input.issueCategory ? sanitizeString(input.issueCategory) : null,
       severity: input.severity,
       status: input.status,
@@ -332,7 +333,7 @@ export async function updateLog(companyId: string, logId: string, input: UpdateL
   if (input.moduleType) updatePayload.moduleType = sanitizeString(input.moduleType);
   if (input.title) updatePayload.title = sanitizeString(input.title);
   if (input.description !== undefined) updatePayload.description = input.description ? sanitizeString(input.description) : null;
-  if (input.transcript !== undefined) updatePayload.transcript = input.transcript ?? null;
+  if (input.transcript !== undefined) updatePayload.transcript = transcriptForStorage(input.transcript);
   if (input.issueCategory !== undefined) updatePayload.issueCategory = input.issueCategory ? sanitizeString(input.issueCategory) : null;
   if (input.severity) updatePayload.severity = input.severity;
   if (input.status) updatePayload.status = input.status;

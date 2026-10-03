@@ -14,6 +14,8 @@ import {
   patchMeasuringPoint,
   patchMeterCounter,
   patchSafetyReporting,
+  postInvalidateImportedMeasuringPointReading,
+  postInvalidateImportedMeterCounterReading,
   removeKaizenCategory,
   removeMeasuringPoint,
   removeMeterCounter,
@@ -21,6 +23,8 @@ import {
 } from "@/modules/imported-master-data/imported-master-data.controller";
 import {
   importedMasterDataIdParamsSchema,
+  importedMasterDataReadingIdParamsSchema,
+  invalidateReadingBodySchema,
   listImportedMasterDataQuerySchema,
   updateKaizenCategoryBodySchema,
   updateMeasuringPointBodySchema,
@@ -33,6 +37,7 @@ import { paginationQuerySchema } from "@/shared/validators/pagination.validation
 const importedMasterDataRouter = Router();
 const readRoles = [USER_ROLES.ADMIN, USER_ROLES.MASTER, USER_ROLES.PLANNER, USER_ROLES.EXECUTION];
 const writeRoles = [USER_ROLES.ADMIN, USER_ROLES.MASTER];
+const readingInvalidationRoles = [USER_ROLES.ADMIN, USER_ROLES.PLANNER];
 
 importedMasterDataRouter.use(requireAuth);
 
@@ -42,11 +47,13 @@ importedMasterDataRouter.delete("/safety-reporting/:id", requireRole(...writeRol
 
 importedMasterDataRouter.get("/measuring-points", requireRole(...readRoles), validate({ query: listImportedMasterDataQuerySchema }), getMeasuringPoints);
 importedMasterDataRouter.get("/measuring-points/:id/readings", requireRole(...readRoles), validate({ params: importedMasterDataIdParamsSchema, query: paginationQuerySchema }), getMeasuringPointReadingHistory);
+importedMasterDataRouter.post("/measuring-points/:id/readings/:readingId/invalidate", requireRole(...readingInvalidationRoles), validate({ params: importedMasterDataReadingIdParamsSchema, body: invalidateReadingBodySchema }), postInvalidateImportedMeasuringPointReading);
 importedMasterDataRouter.patch("/measuring-points/:id", requireRole(...writeRoles), validate({ params: importedMasterDataIdParamsSchema, body: updateMeasuringPointBodySchema }), patchMeasuringPoint);
 importedMasterDataRouter.delete("/measuring-points/:id", requireRole(...writeRoles), validate({ params: importedMasterDataIdParamsSchema }), removeMeasuringPoint);
 
 importedMasterDataRouter.get("/meter-counters", requireRole(...readRoles), validate({ query: listImportedMasterDataQuerySchema }), getMeterCounters);
 importedMasterDataRouter.get("/meter-counters/:id/readings", requireRole(...readRoles), validate({ params: importedMasterDataIdParamsSchema, query: paginationQuerySchema }), getMeterCounterReadingHistory);
+importedMasterDataRouter.post("/meter-counters/:id/readings/:readingId/invalidate", requireRole(...readingInvalidationRoles), validate({ params: importedMasterDataReadingIdParamsSchema, body: invalidateReadingBodySchema }), postInvalidateImportedMeterCounterReading);
 importedMasterDataRouter.patch("/meter-counters/:id", requireRole(...writeRoles), validate({ params: importedMasterDataIdParamsSchema, body: updateMeterCounterBodySchema }), patchMeterCounter);
 importedMasterDataRouter.delete("/meter-counters/:id", requireRole(...writeRoles), validate({ params: importedMasterDataIdParamsSchema }), removeMeterCounter);
 

@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 
 import {
   createMeterCounterReading,
+  invalidateMeterCounterReading,
   listMeterCounterLookup,
   listMeterCounterReadings,
 } from "@/modules/meter-counters/meter-counter.service";
@@ -55,4 +56,17 @@ export const getMeterCounterReadings = asyncHandler(async (request: Request, res
   );
 
   return sendSuccess(response, { data: result.items, meta: result.pagination });
+});
+
+export const postInvalidateMeterCounterReading = asyncHandler(async (request: Request, response: Response) => {
+  const reading = await invalidateMeterCounterReading({
+    companyId: companyIdOf(request),
+    counterId: paramOf(request, "counterId"),
+    readingId: paramOf(request, "readingId"),
+    invalidatedByUserId: String(request.user?.id ?? ""),
+    invalidatedByName: userNameOf(request),
+    reason: request.body.reason,
+  });
+
+  return sendSuccess(response, { data: reading });
 });

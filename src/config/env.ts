@@ -54,13 +54,9 @@ const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional().default(""),
   GEMINI_EXTRACTION_MODEL: z.string().optional().default("gemini-flash-lite-latest"),
   GEMINI_CHAT_MODEL: z.string().optional().default("gemini-flash-latest"),
-  SMTP_HOST: z.string().optional().default(""),
-  SMTP_PORT: z.coerce.number().int().positive().optional().default(587),
-  SMTP_SECURE: z.coerce.boolean().optional().default(false),
-  SMTP_USER: z.string().optional().default(""),
-  SMTP_PASSWORD: z.string().optional().default(""),
-  SMTP_FROM_EMAIL: z.string().optional().default(""),
-  SMTP_FROM_NAME: z.string().optional().default("VoxLogiX"),
+  RESEND_API_KEY: z.string().optional().default(""),
+  EMAIL_FROM: z.string().optional().default(""),
+  PASSWORD_RESET_WEB_URL: z.string().optional().default(""),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
