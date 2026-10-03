@@ -34,6 +34,6 @@ DROP INDEX IF EXISTS "admins_company_employee_id_idx";
 
 -- Create the partial unique index. NULL employee_ids are excluded from the uniqueness
 -- constraint, preserving records that legitimately have no employee ID assigned.
-CREATE UNIQUE INDEX "admins_company_employee_id_uidx"
+CREATE UNIQUE INDEX IF NOT EXISTS "admins_company_employee_id_uidx"
   ON "admins" ("company_id", "employee_id")
   WHERE "employee_id" IS NOT NULL;

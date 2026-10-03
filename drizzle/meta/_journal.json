@@ -169,6 +169,34 @@
       "when": 1790258379159,
       "tag": "0029_scheduled_assignments",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790260000000,
+      "tag": "0030_admin_employee_id_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790261000000,
+      "tag": "0031_password_reset_tokens",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790262000000,
+      "tag": "0032_reading_invalidation",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1791030000000,
+      "tag": "0033_reading_invalidation_schema_repair",
+      "breakpoints": true
     }
   ]
 }

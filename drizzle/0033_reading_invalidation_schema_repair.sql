@@ -1,3 +1,8 @@
+-- Repair migration for deployments that received application code expecting
+-- reading invalidation columns before the Drizzle journal knew about migration
+-- 0032. Keep this idempotent so it is safe on fresh, fully migrated, and
+-- partially repaired databases.
+
 ALTER TABLE "measuring_point_readings"
   ADD COLUMN IF NOT EXISTS "status" varchar(40) DEFAULT 'VALID' NOT NULL,
   ADD COLUMN IF NOT EXISTS "invalidated_at" timestamp with time zone,
